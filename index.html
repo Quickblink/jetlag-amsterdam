@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Jet Lag Amsterdam</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+    #map { height: 100vh; }
+    .toolbar {
+      position: absolute; top: 10px; right: 10px; z-index: 1000;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .toolbar button {
+      background: white; border: 2px solid rgba(0,0,0,0.25);
+      border-radius: 4px; padding: 10px 14px; font-size: 14px;
+      cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .toolbar button:active { background: #eee; }
+    .pin-popup { min-width: 180px; }
+    .pin-popup .row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+    .pin-popup button {
+      padding: 5px 9px; border-radius: 4px; border: 1px solid #bbb;
+      background: white; cursor: pointer; font-size: 13px;
+    }
+    .pin-popup button.active { background: #0066cc; color: white; border-color: #0066cc; }
+    .pin-popup button:active { background: #ddd; }
+    .pin-popup hr { border: none; border-top: 1px solid #eee; margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="toolbar">
+    <button id="drop-pin" title="Drop pin at my current location">📍 Drop pin here</button>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const AMSTERDAM = [52.37, 4.89];
+    const RADII = [250, 500, 1000, 2000, 5000, 10000];
+
+    const map = L.map('map').setView(AMSTERDAM, 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19,
+    }).addTo(map);
+
+    // ---------- Category overlays ----------
+    const categoryStyle = {
+      color: '#006400', weight: 2, fillColor: '#006400', fillOpacity: 0.25,
+    };
+    const pointToLayer = (_f, latlng) => L.circleMarker(latlng, {
+      radius: 6, color: '#004d00', weight: 1, fillColor: '#00aa00', fillOpacity: 0.85,
+    });
+    const onEachFeature = (feature, layer) => {
+      const p = feature.properties || {};
+      const html = `<b>${p.name || '(unnamed)'}</b>${p.description ? '<br>' + p.description : ''}`;
+      layer.bindPopup(html);
+    };
+
+    const layerControl = L.control.layers(null, {}, { collapsed: false }).addTo(map);
+
+    fetch('data/manifest.json')
+      .then(r => r.json())
+      .then(manifest => Promise.all(manifest.categories.map(cat =>
+        fetch('data/' + cat.file).then(r => r.json()).then(geo => {
+          const layer = L.geoJSON(geo, { style: categoryStyle, pointToLayer, onEachFeature });
+          if (cat.default) layer.addTo(map);
+          layerControl.addOverlay(layer, cat.label);
+        })
+      )))
+      .catch(err => console.error('Failed to load layers:', err));
+
+    // ---------- User pins ----------
+    const PIN_KEY = 'jetlag.pins.v1';
+    const pins = new Map(); // id -> {lat, lng, marker, circle, radius}
+
+    function savePins() {
+      const data = [...pins.values()].map(p => ({ id: p.id, lat: p.lat, lng: p.lng, radius: p.radius }));
+      localStorage.setItem(PIN_KEY, JSON.stringify(data));
+    }
+
+    function loadPins() {
+      try {
+        const data = JSON.parse(localStorage.getItem(PIN_KEY) || '[]');
+        for (const p of data) {
+          const pin = addPin(p.lat, p.lng, { id: p.id, save: false });
+          if (p.radius) setCircle(pin.id, p.radius, false);
+        }
+      } catch (e) { console.warn('Failed to load pins:', e); }
+    }
+
+    function pinPopupHtml(id) {
+      const pin = pins.get(id);
+      const buttons = RADII.map(r => {
+        const label = r >= 1000 ? (r / 1000) + ' km' : r + ' m';
+        const active = pin.radius === r ? ' active' : '';
+        return `<button class="r-btn${active}" data-r="${r}">${label}</button>`;
+      }).join('');
+      const noneActive = !pin.radius ? ' active' : '';
+      return `
+        <div class="pin-popup" data-id="${id}">
+          <div><b>Pin</b> <span style="font-size:11px;color:#666">${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}</span></div>
+          <div style="font-size:12px;margin-top:6px">Radius circle:</div>
+          <div class="row">${buttons}<button class="r-btn${noneActive}" data-r="">none</button></div>
+          <hr>
+          <div class="row"><button data-action="remove">Remove pin</button></div>
+        </div>
+      `;
+    }
+
+    function attachPopupHandlers(popupNode, id) {
+      popupNode.querySelectorAll('button[data-r]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const r = btn.dataset.r === '' ? null : parseInt(btn.dataset.r, 10);
+          setCircle(id, r);
+        });
+      });
+      popupNode.querySelectorAll('button[data-action="remove"]').forEach(btn => {
+        btn.addEventListener('click', () => removePin(id));
+      });
+    }
+
+    function addPin(lat, lng, { id = Date.now() + Math.random(), save = true } = {}) {
+      const marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+      const pin = { id, lat, lng, marker, circle: null, radius: null };
+      pins.set(id, pin);
+
+      marker.bindPopup(() => pinPopupHtml(id));
+      marker.on('popupopen', e => attachPopupHandlers(e.popup.getElement(), id));
+      marker.on('dragend', () => {
+        const ll = marker.getLatLng();
+        pin.lat = ll.lat; pin.lng = ll.lng;
+        if (pin.circle) pin.circle.setLatLng(ll);
+        savePins();
+      });
+
+      if (save) savePins();
+      return pin;
+    }
+
+    function removePin(id) {
+      const pin = pins.get(id);
+      if (!pin) return;
+      map.removeLayer(pin.marker);
+      if (pin.circle) map.removeLayer(pin.circle);
+      pins.delete(id);
+      savePins();
+    }
+
+    function setCircle(id, radius, save = true) {
+      const pin = pins.get(id);
+      if (!pin) return;
+      if (pin.circle) { map.removeLayer(pin.circle); pin.circle = null; }
+      pin.radius = radius;
+      if (radius) {
+        pin.circle = L.circle([pin.lat, pin.lng], {
+          radius, color: '#0066cc', weight: 2, fillColor: '#0066cc', fillOpacity: 0.1,
+        }).addTo(map);
+      }
+      if (save) savePins();
+      // refresh popup so the active button updates
+      if (pin.marker.isPopupOpen()) {
+        pin.marker.setPopupContent(pinPopupHtml(id));
+        attachPopupHandlers(pin.marker.getPopup().getElement(), id);
+      }
+    }
+
+    // ---------- Drop pin button ----------
+    document.getElementById('drop-pin').addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        alert('Geolocation is not available in this browser.');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const { latitude, longitude } = pos.coords;
+          const pin = addPin(latitude, longitude);
+          map.panTo([latitude, longitude]);
+          pin.marker.openPopup();
+        },
+        err => alert('Could not get location: ' + err.message),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    });
+
+    loadPins();
+  </script>
+</body>
+</html>

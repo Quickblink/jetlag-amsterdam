@@ -1,0 +1,14 @@
+{
+  "categories": [
+    {
+      "file": "landmasses.geojson",
+      "label": "Landmasses",
+      "default": true
+    },
+    {
+      "file": "parks.geojson",
+      "label": "Parks",
+      "default": true
+    }
+  ]
+}
