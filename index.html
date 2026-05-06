@@ -60,6 +60,23 @@
     .tool-btn + .tool-btn { margin-top: 8px; }
     .tool-btn:active { background: #eee; }
 
+    .therm-banner {
+      position: absolute; top: 10px; left: 10px;
+      right: 64px; /* leave space for menu button */
+      z-index: 1100;
+      background: #d62728; color: white;
+      padding: 8px 12px; border-radius: 4px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      display: flex; align-items: center; gap: 12px;
+      font-size: 13px;
+    }
+    .therm-banner button {
+      background: white; color: #d62728;
+      border: none; padding: 4px 10px; border-radius: 3px;
+      cursor: pointer; font-size: 13px;
+    }
+    .therm-banner span { flex: 1; }
+
     .pin-popup { min-width: 220px; }
     .pin-popup .coords { font-size: 11px; color: #666; }
     .pin-popup .section-label {
@@ -81,14 +98,18 @@
       background: white; font-size: 13px;
       box-sizing: border-box;
     }
-    .pin-popup .therm-btn.active.therm-a { background: #d62728; color: white; border-color: #d62728; }
-    .pin-popup .therm-btn.active.therm-b { background: #2ca02c; color: white; border-color: #2ca02c; }
+    .pin-popup .therm-cancel { background: #d62728; color: white; border-color: #d62728; }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
   <button id="menu-toggle" class="menu-btn" aria-label="Menu">≡</button>
+
+  <div id="therm-banner" class="therm-banner" style="display:none">
+    <span>Tap another pin to complete the thermometer</span>
+    <button id="cancel-pending-therm">Cancel</button>
+  </div>
 
   <aside id="sidebar" class="sidebar">
     <h3>Layers</h3>
@@ -98,7 +119,6 @@
     <button id="drop-pin" class="tool-btn">📍 Drop pin here</button>
     <button id="paste-pin" class="tool-btn">📋 Pin from clipboard</button>
     <button id="export-pins" class="tool-btn">📤 Export pins</button>
-    <button id="clear-thermometer" class="tool-btn" style="display:none">🌡️ Clear thermometer</button>
   </aside>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -107,8 +127,92 @@
     const RADII = [250, 500, 1000, 2000, 5000, 10000];
     const PIN_KEY = 'jetlag.pins.v1';
     const LAYER_KEY = 'jetlag.layers.v1';
-    const THERM_KEY = 'jetlag.thermometer.v1';
+    const THERM_KEY = 'jetlag.thermometers.v2';
 
+    // Open Location Code (Plus codes)
+    const OLC_ALPHABET = '23456789CFGHJMPQRVWX';
+    const OLC_REF = AMSTERDAM; // reference for short-code recovery
+
+    function olcEncode(lat, lng, len = 10) {
+      let la = lat + 90, lo = lng + 180;
+      if (la >= 180) la = 180 - 1e-10;
+      if (lo >= 360) lo -= 360;
+      if (la < 0) la = 0; if (lo < 0) lo = 0;
+      let code = '';
+      let res = 400;
+      for (let i = 0; i < len / 2; i++) {
+        res /= 20;
+        const li = Math.floor(la / res), oi = Math.floor(lo / res);
+        code += OLC_ALPHABET[Math.min(li, 19)] + OLC_ALPHABET[Math.min(oi, 19)];
+        la -= li * res; lo -= oi * res;
+      }
+      return code;
+    }
+
+    function olcDecodeFull(code) {
+      // code: 8-15 chars, no '+', uppercase, all from alphabet
+      let lat = 0, lng = 0, res = 400;
+      for (let i = 0; i < Math.min(code.length, 10); i += 2) {
+        res /= 20;
+        lat += OLC_ALPHABET.indexOf(code[i]) * res;
+        if (i + 1 < code.length) lng += OLC_ALPHABET.indexOf(code[i + 1]) * res;
+      }
+      let latCell = res, lngCell = res;
+      if (code.length > 10) {
+        let rf = res / 4, cf = res / 5;
+        for (let i = 10; i < Math.min(code.length, 15); i++) {
+          const c = OLC_ALPHABET.indexOf(code[i]);
+          lat += Math.floor(c / 5) * rf;
+          lng += (c % 5) * cf;
+          latCell = rf; lngCell = cf;
+          rf /= 4; cf /= 5;
+        }
+      }
+      return [lat - 90 + latCell / 2, lng - 180 + lngCell / 2];
+    }
+
+    function decodePlusCode(text) {
+      const m = text.toUpperCase().match(/([23456789CFGHJMPQRVWX0]{2,8})\+([23456789CFGHJMPQRVWX]{0,7})/);
+      if (!m) return null;
+      const prefix = m[1].replace(/0/g, '');
+      const suffix = m[2];
+      let full;
+      if (prefix.length === 8) {
+        full = prefix + suffix;
+      } else if (prefix.length >= 2 && prefix.length < 8) {
+        // short code: recover with Amsterdam reference
+        const refFull = olcEncode(OLC_REF[0], OLC_REF[1]);
+        full = refFull.slice(0, 8 - prefix.length) + prefix + suffix;
+      } else {
+        return null;
+      }
+      try { return olcDecodeFull(full); }
+      catch (e) { return null; }
+    }
+
+    function parseCoords(text) {
+      if (!text) return null;
+      const plus = decodePlusCode(text);
+      if (plus) return plus;
+      const patterns = [
+        /[?&]q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+        /[?&]ll=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+        /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+        /^\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$/,
+        /(-?\d+\.\d+)\s*[,\s]\s*(-?\d+\.\d+)/,
+      ];
+      for (const p of patterns) {
+        const m = text.match(p);
+        if (m) {
+          const lat = parseFloat(m[1]);
+          const lng = parseFloat(m[2]);
+          if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return [lat, lng];
+        }
+      }
+      return null;
+    }
+
+    // ---------- Map ----------
     const map = L.map('map', { preferCanvas: true }).setView(AMSTERDAM, 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
@@ -203,7 +307,6 @@
           const visible = Object.prototype.hasOwnProperty.call(savedVisibility, cat.file)
             ? !!savedVisibility[cat.file]
             : !!cat.default;
-
           loadedLayers[cat.file] = {
             file: cat.file, label: cat.label, geo, leafletLayer, visible, hasPoints,
           };
@@ -228,8 +331,7 @@
           row.append(cb, name, count);
           layerList.appendChild(row);
         }
-        // Pins loaded earlier may reference category files for measuring circles —
-        // restore those now that the layer data is available.
+        // Restore measuring circles for any pins that had them saved
         for (const pin of pins.values()) {
           if (pin.measuringCategory) drawMeasuringCircles(pin);
         }
@@ -239,7 +341,8 @@
 
     // ---------- User pins ----------
     const pins = new Map();
-    let thermometer = { aId: null, bId: null, layers: [] };
+    const thermometers = []; // [{ id, aId, bId, layers }]
+    let pendingThermometerFrom = null;
 
     function savePins() {
       const data = [...pins.values()].map(p => ({
@@ -256,28 +359,30 @@
           const pin = addPin(p.lat, p.lng, { id: p.id, save: false });
           if (p.radius) setCircle(pin.id, p.radius, false);
           if (p.measuringCategory) pin.measuringCategory = p.measuringCategory;
-          // measuring circles are drawn after layers load (see fetch chain above)
         }
       } catch (e) { console.warn('Failed to load pins:', e); }
     }
 
-    function saveThermometer() {
-      localStorage.setItem(THERM_KEY, JSON.stringify({
-        aId: thermometer.aId, bId: thermometer.bId,
-      }));
+    function saveThermometers() {
+      localStorage.setItem(THERM_KEY, JSON.stringify(
+        thermometers.map(t => ({ id: t.id, aId: t.aId, bId: t.bId }))
+      ));
     }
-    function loadThermometer() {
+    function loadThermometers() {
       try {
-        const d = JSON.parse(localStorage.getItem(THERM_KEY) || '{}');
-        thermometer.aId = (d.aId && pins.has(d.aId)) ? d.aId : null;
-        thermometer.bId = (d.bId && pins.has(d.bId)) ? d.bId : null;
+        const data = JSON.parse(localStorage.getItem(THERM_KEY) || '[]');
+        for (const t of data) {
+          if (pins.has(t.aId) && pins.has(t.bId)) {
+            const therm = { id: t.id, aId: t.aId, bId: t.bId, layers: [] };
+            thermometers.push(therm);
+            drawThermometer(therm);
+          }
+        }
       } catch (e) {}
     }
 
     function pinPopupHtml(id) {
       const pin = pins.get(id);
-      const isA = thermometer.aId === id;
-      const isB = thermometer.bId === id;
 
       const radiusBtns = RADII.map(r => {
         const label = r >= 1000 ? (r / 1000) + ' km' : r + ' m';
@@ -294,6 +399,21 @@
           return `<option value="${l.file}"${sel}>${l.label}</option>`;
         }).join('');
 
+      const myThermometers = thermometers.filter(t => t.aId === id || t.bId === id);
+      let thermSection;
+      if (pendingThermometerFrom === id) {
+        thermSection = `<div class="row"><button class="therm-cancel" data-action="cancel-pending">Cancel pending</button></div>`;
+      } else {
+        const removeBtns = myThermometers.map(t => {
+          const otherId = t.aId === id ? t.bId : t.aId;
+          const other = pins.get(otherId);
+          const otherStr = other ? `${other.lat.toFixed(4)}, ${other.lng.toFixed(4)}` : '?';
+          return `<div class="row"><button data-action="remove-therm" data-tid="${t.id}">Remove (to ${otherStr})</button></div>`;
+        }).join('');
+        const startLabel = myThermometers.length > 0 ? '+ New thermometer' : 'Start thermometer';
+        thermSection = removeBtns + `<div class="row"><button data-action="start-therm">${startLabel}</button></div>`;
+      }
+
       return `
         <div class="pin-popup" data-id="${id}">
           <div><b>Pin</b> <span class="coords">${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}</span></div>
@@ -305,10 +425,7 @@
           <select class="measure-sel">${measureOpts}</select>
 
           <div class="section-label">Thermometer</div>
-          <div class="row">
-            <button class="therm-btn therm-a${isA ? ' active' : ''}" data-end="a">A (start)</button>
-            <button class="therm-btn therm-b${isB ? ' active' : ''}" data-end="b">B (end)</button>
-          </div>
+          ${thermSection}
 
           <hr>
           <div class="row"><button data-action="remove">Remove pin</button></div>
@@ -326,8 +443,14 @@
       node.querySelectorAll('.measure-sel').forEach(sel => {
         sel.addEventListener('change', () => setMeasuring(id, sel.value || null));
       });
-      node.querySelectorAll('.therm-btn').forEach(btn => {
-        btn.addEventListener('click', () => setThermometerEnd(id, btn.dataset.end));
+      node.querySelectorAll('button[data-action="start-therm"]').forEach(btn => {
+        btn.addEventListener('click', () => startThermometerFrom(id));
+      });
+      node.querySelectorAll('button[data-action="cancel-pending"]').forEach(btn => {
+        btn.addEventListener('click', () => cancelPendingThermometer());
+      });
+      node.querySelectorAll('button[data-action="remove-therm"]').forEach(btn => {
+        btn.addEventListener('click', () => removeThermometer(btn.dataset.tid));
       });
       node.querySelectorAll('button[data-action="remove"]').forEach(btn => {
         btn.addEventListener('click', () => removePin(id));
@@ -354,13 +477,23 @@
       };
       pins.set(id, pin);
       marker.bindPopup(() => pinPopupHtml(id));
-      marker.on('popupopen', e => attachPopupHandlers(e.popup.getElement(), id));
+      marker.on('popupopen', e => {
+        if (pendingThermometerFrom !== null && pendingThermometerFrom !== id) {
+          // This click is meant to complete a thermometer, not open a popup.
+          completeThermometer(id);
+          marker.closePopup();
+          return;
+        }
+        attachPopupHandlers(e.popup.getElement(), id);
+      });
       marker.on('dragend', () => {
         const ll = marker.getLatLng();
         pin.lat = ll.lat; pin.lng = ll.lng;
         if (pin.circle) pin.circle.setLatLng(ll);
         if (pin.measuringCategory) drawMeasuringCircles(pin);
-        if (thermometer.aId === id || thermometer.bId === id) redrawThermometer();
+        for (const t of thermometers) {
+          if (t.aId === id || t.bId === id) drawThermometer(t);
+        }
         savePins();
       });
       if (save) savePins();
@@ -372,16 +505,22 @@
       if (!pin) return;
       // measuring circles
       for (const c of pin.measuringCircles) map.removeLayer(c);
-      // thermometer assignment
-      if (thermometer.aId === id) thermometer.aId = null;
-      if (thermometer.bId === id) thermometer.bId = null;
-      redrawThermometer();
-      saveThermometer();
+      // thermometers involving this pin
+      for (let i = thermometers.length - 1; i >= 0; i--) {
+        if (thermometers[i].aId === id || thermometers[i].bId === id) {
+          for (const layer of thermometers[i].layers) map.removeLayer(layer);
+          thermometers.splice(i, 1);
+        }
+      }
+      // pending thermometer from this pin
+      if (pendingThermometerFrom === id) cancelPendingThermometer();
       // pin itself
       map.removeLayer(pin.marker);
       if (pin.circle) map.removeLayer(pin.circle);
       pins.delete(id);
       savePins();
+      saveThermometers();
+      refreshAllPinPopups();
     }
 
     function setCircle(id, radius, save = true) {
@@ -398,19 +537,28 @@
       refreshPinPopup(id);
     }
 
-    // ---------- Measuring circles ----------
+    // ---------- Measuring circles (matching-question visual) ----------
     function drawMeasuringCircles(pin) {
       for (const c of pin.measuringCircles) map.removeLayer(c);
       pin.measuringCircles = [];
       const layer = pin.measuringCategory && loadedLayers[pin.measuringCategory];
       if (!layer) return;
       const points = layer.geo.features.filter(f => f.geometry && f.geometry.type === 'Point');
+      if (points.length === 0) return;
+
+      // Single radius for every circle: the pin's distance to its nearest feature.
+      let dNearest = Infinity;
       for (const f of points) {
         const [lng, lat] = f.geometry.coordinates;
-        const dist = map.distance([pin.lat, pin.lng], [lat, lng]);
-        if (dist === 0) continue;
+        const d = map.distance([pin.lat, pin.lng], [lat, lng]);
+        if (d < dNearest) dNearest = d;
+      }
+      if (!isFinite(dNearest) || dNearest === 0) return;
+
+      for (const f of points) {
+        const [lng, lat] = f.geometry.coordinates;
         const c = L.circle([lat, lng], {
-          radius: dist,
+          radius: dNearest,
           color: '#ff7f0e', weight: 1,
           fillColor: '#ff7f0e', fillOpacity: 0.04,
           interactive: false,
@@ -428,20 +576,17 @@
       refreshPinPopup(id);
     }
 
-    // ---------- Thermometer ----------
+    // ---------- Thermometers ----------
     function bisectorEndpoints(a, b) {
       const midLat = (a.lat + b.lat) / 2;
       const midLng = (a.lng + b.lng) / 2;
       const cosLat = Math.cos(midLat * Math.PI / 180);
-      // metric AB vector (north, east)
       const dn = (b.lat - a.lat) * 111320;
       const de = (b.lng - a.lng) * 111320 * cosLat;
       const len = Math.sqrt(dn * dn + de * de);
       if (len === 0) return null;
-      // perpendicular unit vector
-      const pn = -de / len;
-      const pe = dn / len;
-      const ext = 100000; // 100 km — far beyond any plausible map view
+      const pn = -de / len, pe = dn / len;
+      const ext = 100000;
       const offsetLat = pn * ext / 111320;
       const offsetLng = pe * ext / (111320 * cosLat);
       return [
@@ -450,73 +595,77 @@
       ];
     }
 
-    function redrawThermometer() {
-      for (const layer of thermometer.layers) map.removeLayer(layer);
-      thermometer.layers = [];
-
-      const a = pins.get(thermometer.aId);
-      const b = pins.get(thermometer.bId);
-      const clearBtn = document.getElementById('clear-thermometer');
-      clearBtn.style.display = (a || b) ? 'block' : 'none';
+    function drawThermometer(t) {
+      for (const layer of t.layers) map.removeLayer(layer);
+      t.layers = [];
+      const a = pins.get(t.aId), b = pins.get(t.bId);
       if (!a || !b) return;
-
       const aLL = L.latLng(a.lat, a.lng);
       const bLL = L.latLng(b.lat, b.lng);
       const seg = L.polyline([aLL, bLL], {
         color: '#d62728', weight: 2, opacity: 0.8,
       }).addTo(map);
-      thermometer.layers.push(seg);
+      t.layers.push(seg);
       const ends = bisectorEndpoints(aLL, bLL);
       if (ends) {
         const bisector = L.polyline(ends, {
           color: '#d62728', weight: 2, dashArray: '8, 6', opacity: 0.8,
         }).addTo(map);
-        thermometer.layers.push(bisector);
+        t.layers.push(bisector);
       }
     }
 
-    function setThermometerEnd(pinId, end) {
-      const key = end === 'a' ? 'aId' : 'bId';
-      const otherKey = end === 'a' ? 'bId' : 'aId';
-      if (thermometer[key] === pinId) {
-        thermometer[key] = null;
-      } else {
-        thermometer[key] = pinId;
-        if (thermometer[otherKey] === pinId) thermometer[otherKey] = null;
-      }
-      redrawThermometer();
-      saveThermometer();
+    function startThermometerFrom(pinId) {
+      pendingThermometerFrom = pinId;
+      document.getElementById('therm-banner').style.display = 'flex';
+      // Close the popup so the user can tap another pin without dismissing this one's popup first
+      const pin = pins.get(pinId);
+      if (pin) pin.marker.closePopup();
       refreshAllPinPopups();
     }
 
-    document.getElementById('clear-thermometer').addEventListener('click', () => {
-      thermometer.aId = null; thermometer.bId = null;
-      redrawThermometer();
-      saveThermometer();
-      refreshAllPinPopups();
-      toggleSidebar(false);
-    });
-
-    // ---------- Coordinate parsing ----------
-    function parseCoords(text) {
-      if (!text) return null;
-      const patterns = [
-        /[?&]q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
-        /[?&]ll=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
-        /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
-        /^\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$/,
-        /(-?\d+\.\d+)\s*[,\s]\s*(-?\d+\.\d+)/,
-      ];
-      for (const p of patterns) {
-        const m = text.match(p);
-        if (m) {
-          const lat = parseFloat(m[1]);
-          const lng = parseFloat(m[2]);
-          if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return [lat, lng];
-        }
-      }
-      return null;
+    function cancelPendingThermometer() {
+      const wasPending = pendingThermometerFrom;
+      pendingThermometerFrom = null;
+      document.getElementById('therm-banner').style.display = 'none';
+      if (wasPending !== null) refreshPinPopup(wasPending);
     }
+
+    function completeThermometer(secondPinId) {
+      const aId = pendingThermometerFrom;
+      if (aId === null || aId === secondPinId) {
+        cancelPendingThermometer();
+        return;
+      }
+      // Avoid duplicate thermometer between the same pair
+      const dup = thermometers.some(t =>
+        (t.aId === aId && t.bId === secondPinId) ||
+        (t.aId === secondPinId && t.bId === aId)
+      );
+      if (!dup) {
+        const t = {
+          id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+          aId, bId: secondPinId, layers: [],
+        };
+        thermometers.push(t);
+        drawThermometer(t);
+        saveThermometers();
+      }
+      pendingThermometerFrom = null;
+      document.getElementById('therm-banner').style.display = 'none';
+      refreshAllPinPopups();
+    }
+
+    function removeThermometer(thermId) {
+      const idx = thermometers.findIndex(t => t.id === thermId);
+      if (idx < 0) return;
+      for (const layer of thermometers[idx].layers) map.removeLayer(layer);
+      thermometers.splice(idx, 1);
+      saveThermometers();
+      refreshAllPinPopups();
+    }
+
+    document.getElementById('cancel-pending-therm').addEventListener('click', cancelPendingThermometer);
 
     // ---------- Tool buttons ----------
     document.getElementById('drop-pin').addEventListener('click', () => {
@@ -574,8 +723,7 @@
 
     // ---------- Init ----------
     loadPins();
-    loadThermometer();
-    redrawThermometer();
+    loadThermometers();
   </script>
 </body>
 </html>
