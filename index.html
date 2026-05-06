@@ -87,7 +87,10 @@
     const AMSTERDAM = [52.37, 4.89];
     const RADII = [250, 500, 1000, 2000, 5000, 10000];
 
-    const map = L.map('map').setView(AMSTERDAM, 12);
+    // preferCanvas keeps polygons rendering on a canvas that pans with the map
+    // instead of repainting SVG paths on every move — needed once you have
+    // thousands of polygons across the layers.
+    const map = L.map('map', { preferCanvas: true }).setView(AMSTERDAM, 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
@@ -106,17 +109,53 @@
     });
 
     // ---------- Category overlays ----------
-    const categoryStyle = {
-      color: '#006400', weight: 2, fillColor: '#006400', fillOpacity: 0.25,
-    };
-    const pointToLayer = (_f, latlng) => L.circleMarker(latlng, {
-      radius: 6, color: '#004d00', weight: 1, fillColor: '#00aa00', fillOpacity: 0.85,
-    });
     const onEachFeature = (feature, layer) => {
       const p = feature.properties || {};
       const html = `<b>${p.name || '(unnamed)'}</b>${p.description ? '<br>' + p.description : ''}`;
       layer.bindPopup(html);
     };
+
+    function buildLayer(geo) {
+      const styles = geo._styles || {};
+      const styleFor = feature => {
+        const sid = feature && feature.properties && feature.properties._styleId;
+        return (sid && styles[sid]) || {};
+      };
+      return L.geoJSON(geo, {
+        style: feature => {
+          const s = styleFor(feature);
+          return {
+            color: s.color || '#444',
+            weight: s.weight != null ? s.weight : 1,
+            opacity: s.opacity != null ? s.opacity : 1,
+            fillColor: s.fillColor || s.color || '#444',
+            fillOpacity: s.fillOpacity != null ? s.fillOpacity : 0.2,
+          };
+        },
+        pointToLayer: (feature, latlng) => {
+          const s = styleFor(feature);
+          if (s.iconUrl) {
+            const size = Math.round(32 * (s.iconScale || 1));
+            return L.marker(latlng, {
+              icon: L.icon({
+                iconUrl: s.iconUrl,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2],
+                popupAnchor: [0, -size / 2],
+              }),
+            });
+          }
+          return L.circleMarker(latlng, {
+            radius: 6,
+            color: s.color || '#004d00',
+            weight: 1,
+            fillColor: s.fillColor || s.color || '#00aa00',
+            fillOpacity: 0.85,
+          });
+        },
+        onEachFeature,
+      });
+    }
 
     const layerList = document.getElementById('layer-list');
 
@@ -127,7 +166,7 @@
       )))
       .then(items => {
         for (const { cat, geo } of items) {
-          const layer = L.geoJSON(geo, { style: categoryStyle, pointToLayer, onEachFeature });
+          const layer = buildLayer(geo);
           if (cat.default) layer.addTo(map);
 
           const row = document.createElement('label');
