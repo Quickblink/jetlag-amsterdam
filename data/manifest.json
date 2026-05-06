@@ -3,57 +3,57 @@
     {
       "file": "amusement_parks.geojson",
       "label": "Amusement Parks",
-      "default": true
+      "default": false
     },
     {
       "file": "aquariums.geojson",
       "label": "Aquariums",
-      "default": true
+      "default": false
     },
     {
       "file": "consulates.geojson",
       "label": "Consulates",
-      "default": true
+      "default": false
     },
     {
       "file": "golf.geojson",
       "label": "Golf",
-      "default": true
+      "default": false
     },
     {
       "file": "hospitals.geojson",
       "label": "Hospitals",
-      "default": true
+      "default": false
     },
     {
       "file": "landmass.geojson",
       "label": "Landmass",
-      "default": true
+      "default": false
     },
     {
       "file": "libraries.geojson",
       "label": "Libraries",
-      "default": true
+      "default": false
     },
     {
       "file": "movie_theaters.geojson",
       "label": "Movie Theaters",
-      "default": true
+      "default": false
     },
     {
       "file": "museums.geojson",
       "label": "Museums",
-      "default": true
+      "default": false
     },
     {
       "file": "parks.geojson",
       "label": "Parks",
-      "default": true
+      "default": false
     },
     {
       "file": "play_area.geojson",
       "label": "Play Area",
-      "default": true
+      "default": false
     },
     {
       "file": "transit_stations.geojson",
@@ -63,7 +63,7 @@
     {
       "file": "zoos.geojson",
       "label": "Zoos",
-      "default": true
+      "default": false
     }
   ]
 }

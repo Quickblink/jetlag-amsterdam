@@ -148,8 +148,9 @@ def main():
         categories.append({
             "file": out.name,
             "label": category.replace("_", " ").title(),
-            # transit_stations has 1641 points — too noisy to show by default
-            "default": category != "transit_stations",
+            # First-time visitors see an empty map. Once a user toggles layers,
+            # their selection is persisted in localStorage and used on reload.
+            "default": False,
         })
 
     (dst / "manifest.json").write_text(json.dumps({"categories": categories}, indent=2))
