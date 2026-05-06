@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Convert amsterdam-*.kml files in the parent directory into per-category GeoJSON
-in data/, and write a manifest.json listing them. Stdlib only."""
+"""Convert ../maps/*.kml into per-category GeoJSON in data/, and write a
+manifest.json listing them. Stdlib only."""
 
 import json
 from pathlib import Path
@@ -59,21 +59,22 @@ def kml_to_geojson(kml_path):
 
 
 def main():
-    src = Path(__file__).resolve().parent.parent
+    src = Path(__file__).resolve().parent.parent / "maps"
     dst = Path(__file__).resolve().parent / "data"
     dst.mkdir(exist_ok=True)
 
     categories = []
-    for kml in sorted(src.glob("amsterdam-*.kml")):
-        category = kml.stem.replace("amsterdam-", "")
+    for kml in sorted(src.glob("*.kml")):
+        category = kml.stem
         gj = kml_to_geojson(kml)
         out = dst / f"{category}.geojson"
         out.write_text(json.dumps(gj, separators=(",", ":")))
         print(f"{kml.name} -> data/{out.name} ({len(gj['features'])} features)")
         categories.append({
             "file": out.name,
-            "label": category.replace("-", " ").title(),
-            "default": True,
+            "label": category.replace("_", " ").title(),
+            # transit_stations has 1641 points — too noisy to show by default
+            "default": category != "transit_stations",
         })
 
     (dst / "manifest.json").write_text(json.dumps({"categories": categories}, indent=2))

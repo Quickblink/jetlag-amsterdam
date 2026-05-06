@@ -8,16 +8,56 @@
   <style>
     html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
     #map { height: 100vh; }
-    .toolbar {
-      position: absolute; top: 10px; right: 10px; z-index: 1000;
-      display: flex; flex-direction: column; gap: 6px;
-    }
-    .toolbar button {
+
+    .menu-btn {
+      position: absolute; top: 10px; right: 10px; z-index: 1100;
+      width: 44px; height: 44px;
       background: white; border: 2px solid rgba(0,0,0,0.25);
-      border-radius: 4px; padding: 10px 14px; font-size: 14px;
-      cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      border-radius: 4px; padding: 0;
+      font-size: 22px; line-height: 1; cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
     }
-    .toolbar button:active { background: #eee; }
+    .menu-btn:active { background: #eee; }
+
+    .sidebar {
+      position: absolute; top: 0; right: 0; bottom: 0;
+      width: 280px; max-width: 85vw;
+      background: white; box-shadow: -2px 0 8px rgba(0,0,0,0.15);
+      transform: translateX(100%);
+      transition: transform 0.2s ease-out;
+      z-index: 1050;
+      overflow-y: auto;
+      padding: 60px 16px 16px;
+      box-sizing: border-box;
+    }
+    .sidebar.open { transform: translateX(0); }
+
+    .sidebar h3 {
+      margin: 16px 0 8px;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #666;
+    }
+    .sidebar h3:first-of-type { margin-top: 0; }
+
+    .layer-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 4px;
+      cursor: pointer; user-select: none;
+      border-radius: 4px;
+    }
+    .layer-row:active { background: #f0f0f0; }
+    .layer-row input { margin: 0; }
+    .layer-row .count { color: #888; font-size: 12px; margin-left: auto; }
+
+    .tool-btn {
+      width: 100%; padding: 12px; font-size: 14px;
+      background: white; border: 1px solid #bbb; border-radius: 4px;
+      cursor: pointer;
+    }
+    .tool-btn:active { background: #eee; }
+
     .pin-popup { min-width: 180px; }
     .pin-popup .row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
     .pin-popup button {
@@ -31,9 +71,16 @@
 </head>
 <body>
   <div id="map"></div>
-  <div class="toolbar">
-    <button id="drop-pin" title="Drop pin at my current location">📍 Drop pin here</button>
-  </div>
+
+  <button id="menu-toggle" class="menu-btn" aria-label="Menu">≡</button>
+
+  <aside id="sidebar" class="sidebar">
+    <h3>Layers</h3>
+    <div id="layer-list"></div>
+
+    <h3>Tools</h3>
+    <button id="drop-pin" class="tool-btn">📍 Drop pin here</button>
+  </aside>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
@@ -45,6 +92,18 @@
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
     }).addTo(map);
+
+    // ---------- Sidebar ----------
+    const sidebar = document.getElementById('sidebar');
+    const menuBtn = document.getElementById('menu-toggle');
+    function toggleSidebar(force) {
+      const willOpen = typeof force === 'boolean' ? force : !sidebar.classList.contains('open');
+      sidebar.classList.toggle('open', willOpen);
+    }
+    menuBtn.addEventListener('click', e => { e.stopPropagation(); toggleSidebar(); });
+    document.addEventListener('click', e => {
+      if (!sidebar.contains(e.target) && e.target !== menuBtn) toggleSidebar(false);
+    });
 
     // ---------- Category overlays ----------
     const categoryStyle = {
@@ -59,22 +118,41 @@
       layer.bindPopup(html);
     };
 
-    const layerControl = L.control.layers(null, {}, { collapsed: false }).addTo(map);
+    const layerList = document.getElementById('layer-list');
 
     fetch('data/manifest.json')
       .then(r => r.json())
       .then(manifest => Promise.all(manifest.categories.map(cat =>
-        fetch('data/' + cat.file).then(r => r.json()).then(geo => {
+        fetch('data/' + cat.file).then(r => r.json()).then(geo => ({ cat, geo }))
+      )))
+      .then(items => {
+        for (const { cat, geo } of items) {
           const layer = L.geoJSON(geo, { style: categoryStyle, pointToLayer, onEachFeature });
           if (cat.default) layer.addTo(map);
-          layerControl.addOverlay(layer, cat.label);
-        })
-      )))
+
+          const row = document.createElement('label');
+          row.className = 'layer-row';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = !!cat.default;
+          cb.addEventListener('change', () => {
+            if (cb.checked) layer.addTo(map);
+            else map.removeLayer(layer);
+          });
+          const name = document.createElement('span');
+          name.textContent = cat.label;
+          const count = document.createElement('span');
+          count.className = 'count';
+          count.textContent = geo.features.length;
+          row.append(cb, name, count);
+          layerList.appendChild(row);
+        }
+      })
       .catch(err => console.error('Failed to load layers:', err));
 
     // ---------- User pins ----------
     const PIN_KEY = 'jetlag.pins.v1';
-    const pins = new Map(); // id -> {lat, lng, marker, circle, radius}
+    const pins = new Map();
 
     function savePins() {
       const data = [...pins.values()].map(p => ({ id: p.id, lat: p.lat, lng: p.lng, radius: p.radius }));
@@ -126,7 +204,6 @@
       const marker = L.marker([lat, lng], { draggable: true }).addTo(map);
       const pin = { id, lat, lng, marker, circle: null, radius: null };
       pins.set(id, pin);
-
       marker.bindPopup(() => pinPopupHtml(id));
       marker.on('popupopen', e => attachPopupHandlers(e.popup.getElement(), id));
       marker.on('dragend', () => {
@@ -135,7 +212,6 @@
         if (pin.circle) pin.circle.setLatLng(ll);
         savePins();
       });
-
       if (save) savePins();
       return pin;
     }
@@ -160,7 +236,6 @@
         }).addTo(map);
       }
       if (save) savePins();
-      // refresh popup so the active button updates
       if (pin.marker.isPopupOpen()) {
         pin.marker.setPopupContent(pinPopupHtml(id));
         attachPopupHandlers(pin.marker.getPopup().getElement(), id);
@@ -169,6 +244,7 @@
 
     // ---------- Drop pin button ----------
     document.getElementById('drop-pin').addEventListener('click', () => {
+      toggleSidebar(false);
       if (!navigator.geolocation) {
         alert('Geolocation is not available in this browser.');
         return;
