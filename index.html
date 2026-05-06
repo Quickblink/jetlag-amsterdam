@@ -219,6 +219,14 @@
       maxZoom: 19,
     }).addTo(map);
 
+    // Dedicated pane for measuring circles. With fillOpacity:1 + stroke:false
+    // on each circle, overlaps merge into one solid shape on the pane's canvas;
+    // the pane's CSS opacity then makes that merged shape translucent.
+    const measuringPane = map.createPane('measuring');
+    measuringPane.style.opacity = '0.35';
+    measuringPane.style.zIndex = '410';
+    const measuringRenderer = L.canvas({ pane: 'measuring' });
+
     // ---------- Sidebar ----------
     const sidebar = document.getElementById('sidebar');
     const menuBtn = document.getElementById('menu-toggle');
@@ -403,15 +411,15 @@
       let thermSection;
       if (pendingThermometerFrom === id) {
         thermSection = `<div class="row"><button class="therm-cancel" data-action="cancel-pending">Cancel pending</button></div>`;
-      } else {
-        const removeBtns = myThermometers.map(t => {
+      } else if (myThermometers.length > 0) {
+        thermSection = myThermometers.map(t => {
           const otherId = t.aId === id ? t.bId : t.aId;
           const other = pins.get(otherId);
           const otherStr = other ? `${other.lat.toFixed(4)}, ${other.lng.toFixed(4)}` : '?';
           return `<div class="row"><button data-action="remove-therm" data-tid="${t.id}">Remove (to ${otherStr})</button></div>`;
         }).join('');
-        const startLabel = myThermometers.length > 0 ? '+ New thermometer' : 'Start thermometer';
-        thermSection = removeBtns + `<div class="row"><button data-action="start-therm">${startLabel}</button></div>`;
+      } else {
+        thermSection = `<div class="row"><button data-action="start-therm">Start thermometer</button></div>`;
       }
 
       return `
@@ -559,9 +567,11 @@
         const [lng, lat] = f.geometry.coordinates;
         const c = L.circle([lat, lng], {
           radius: dNearest,
-          color: '#ff7f0e', weight: 1,
-          fillColor: '#ff7f0e', fillOpacity: 0.04,
+          stroke: false,
+          fillColor: '#ff7f0e', fillOpacity: 1.0,
           interactive: false,
+          pane: 'measuring',
+          renderer: measuringRenderer,
         }).addTo(map);
         pin.measuringCircles.push(c);
       }
@@ -578,20 +588,26 @@
 
     // ---------- Thermometers ----------
     function bisectorEndpoints(a, b) {
-      const midLat = (a.lat + b.lat) / 2;
-      const midLng = (a.lng + b.lng) / 2;
-      const cosLat = Math.cos(midLat * Math.PI / 180);
-      const dn = (b.lat - a.lat) * 111320;
-      const de = (b.lng - a.lng) * 111320 * cosLat;
-      const len = Math.sqrt(dn * dn + de * de);
+      // Compute the perpendicular bisector in Web Mercator pixel space rather
+      // than in lat/lng degrees. Leaflet renders polylines as straight lines
+      // in Mercator, and Mercator is conformal — so a perpendicular drawn in
+      // Mercator pixels stays visually perpendicular to AB at any rendering
+      // zoom. Doing it in lat/lng (even with a cos-lat correction) skews the
+      // midpoint when A and B differ in latitude, because the y-axis in
+      // Mercator is non-linear in lat.
+      const z = 18;
+      const ptA = map.project(L.latLng(a.lat, a.lng), z);
+      const ptB = map.project(L.latLng(b.lat, b.lng), z);
+      const mid = L.point((ptA.x + ptB.x) / 2, (ptA.y + ptB.y) / 2);
+      const dx = ptB.x - ptA.x, dy = ptB.y - ptA.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
       if (len === 0) return null;
-      const pn = -de / len, pe = dn / len;
-      const ext = 100000;
-      const offsetLat = pn * ext / 111320;
-      const offsetLng = pe * ext / (111320 * cosLat);
+      const px = -dy / len, py = dx / len;
+      // Extend by enough Mercator pixels at z=18 to span any plausible map view.
+      const ext = 1e7;
       return [
-        L.latLng(midLat + offsetLat, midLng + offsetLng),
-        L.latLng(midLat - offsetLat, midLng - offsetLng),
+        map.unproject(L.point(mid.x + px * ext, mid.y + py * ext), z),
+        map.unproject(L.point(mid.x - px * ext, mid.y - py * ext), z),
       ];
     }
 
