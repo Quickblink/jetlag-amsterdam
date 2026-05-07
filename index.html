@@ -9,19 +9,21 @@
     html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
     #map { height: 100vh; }
 
-    .menu-btn {
-      position: absolute; top: 10px; right: 10px; z-index: 1100;
+    .map-btn {
+      position: absolute; right: 10px; z-index: 1100;
       width: 44px; height: 44px;
       background: white; border: 2px solid rgba(0,0,0,0.25);
       border-radius: 4px; padding: 0;
       font-size: 22px; line-height: 1; cursor: pointer;
       box-shadow: 0 1px 3px rgba(0,0,0,0.15);
     }
-    .menu-btn:active { background: #eee; }
+    .map-btn:active { background: #eee; }
+    #menu-toggle { top: 10px; }
+    #pin-here { top: 64px; }
 
     .sidebar {
       position: absolute; top: 0; right: 0; bottom: 0;
-      width: 280px; max-width: 85vw;
+      width: 300px; max-width: 85vw;
       background: white; box-shadow: -2px 0 8px rgba(0,0,0,0.15);
       transform: translateX(100%);
       transition: transform 0.2s ease-out;
@@ -41,15 +43,34 @@
     }
     .sidebar h3:first-of-type { margin-top: 0; }
 
-    .layer-row {
-      display: flex; align-items: center; gap: 8px;
-      padding: 8px 4px;
-      cursor: pointer; user-select: none;
-      border-radius: 4px;
+    .layer-grid {
+      display: grid;
+      grid-template-columns: 1fr 40px 40px;
+      gap: 0 6px;
+      align-items: center;
     }
-    .layer-row:active { background: #f0f0f0; }
-    .layer-row input { margin: 0; }
-    .layer-row .count { color: #888; font-size: 12px; margin-left: auto; }
+    .layer-grid .header {
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #888;
+      text-align: center;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #eee;
+    }
+    .layer-grid .name {
+      padding: 7px 4px;
+      display: flex; gap: 6px; align-items: baseline;
+      user-select: none;
+    }
+    .layer-grid .count { color: #888; font-size: 12px; }
+    .layer-grid .cb-cell {
+      display: flex;
+      justify-content: center;
+      padding: 7px 0;
+    }
+    .layer-grid .cb-cell input { margin: 0; cursor: pointer; }
+    .layer-grid .cb-cell input:disabled { visibility: hidden; }
 
     .tool-btn {
       width: 100%; padding: 12px; font-size: 14px;
@@ -59,10 +80,11 @@
     }
     .tool-btn + .tool-btn { margin-top: 8px; }
     .tool-btn:active { background: #eee; }
+    .tool-btn.active { background: #0066cc; color: white; border-color: #0066cc; }
 
     .therm-banner {
       position: absolute; top: 10px; left: 10px;
-      right: 64px; /* leave space for menu button */
+      right: 64px;
       z-index: 1100;
       background: #d62728; color: white;
       padding: 8px 12px; border-radius: 4px;
@@ -77,14 +99,22 @@
     }
     .therm-banner span { flex: 1; }
 
-    .pin-popup { min-width: 220px; }
+    .pin-popup { min-width: 240px; }
     .pin-popup .coords { font-size: 11px; color: #666; }
+    .pin-popup .header-row {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    }
+    .pin-popup .lock-toggle {
+      font-size: 12px; cursor: pointer; user-select: none;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .pin-popup .lock-toggle input { margin: 0; }
     .pin-popup .section-label {
       font-size: 11px; color: #666;
       text-transform: uppercase; letter-spacing: 0.04em;
       margin: 8px 0 4px;
     }
-    .pin-popup .row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+    .pin-popup .row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; align-items: center; }
     .pin-popup button {
       padding: 5px 9px; border-radius: 4px; border: 1px solid #bbb;
       background: white; cursor: pointer; font-size: 13px;
@@ -99,12 +129,23 @@
       box-sizing: border-box;
     }
     .pin-popup .therm-cancel { background: #d62728; color: white; border-color: #d62728; }
+    .pin-popup .custom-radius input {
+      width: 80px; padding: 5px; border: 1px solid #bbb;
+      border-radius: 4px; font-size: 13px;
+    }
+
+    .feature-popup { min-width: 200px; }
+    .feature-popup button {
+      padding: 5px 9px; border-radius: 4px; border: 1px solid #bbb;
+      background: white; cursor: pointer; font-size: 13px;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <button id="menu-toggle" class="menu-btn" aria-label="Menu">≡</button>
+  <button id="menu-toggle" class="map-btn" aria-label="Menu">≡</button>
+  <button id="pin-here" class="map-btn" aria-label="Pin at viewport center" title="Pin at viewport center">+</button>
 
   <div id="therm-banner" class="therm-banner" style="display:none">
     <span>Tap another pin to complete the thermometer</span>
@@ -113,11 +154,16 @@
 
   <aside id="sidebar" class="sidebar">
     <h3>Layers</h3>
-    <div id="layer-list"></div>
+    <div id="layer-grid" class="layer-grid">
+      <div class="header"></div>
+      <div class="header">Icons</div>
+      <div class="header">Zones</div>
+    </div>
 
     <h3>Tools</h3>
     <button id="drop-pin" class="tool-btn">📍 Drop pin here</button>
     <button id="paste-pin" class="tool-btn">📋 Pin from clipboard</button>
+    <button id="track-location" class="tool-btn">🔵 Track my location</button>
     <button id="export-pins" class="tool-btn">📤 Export pins</button>
   </aside>
 
@@ -125,32 +171,32 @@
   <script>
     const AMSTERDAM = [52.37, 4.89];
     const RADII = [250, 500, 1000, 2000, 5000, 10000];
-    const PIN_KEY = 'jetlag.pins.v1';
-    const LAYER_KEY = 'jetlag.layers.v1';
+    const PIN_KEY = 'jetlag.pins.v2'; // bumped: added `locked`
+    const LAYER_KEY = 'jetlag.layers.v2'; // bumped: split into points/polygons
+    const LAYER_KEY_LEGACY = 'jetlag.layers.v1';
     const THERM_KEY = 'jetlag.thermometers.v2';
+    const LOCKED_ZONES_KEY = 'jetlag.lockedZones.v1';
+    const TRACK_KEY = 'jetlag.tracking.v1';
 
-    // Open Location Code (Plus codes)
+    // ---------- Plus codes ----------
     const OLC_ALPHABET = '23456789CFGHJMPQRVWX';
-    const OLC_REF = AMSTERDAM; // reference for short-code recovery
-
+    const OLC_REF = AMSTERDAM;
     function olcEncode(lat, lng, len = 10) {
       let la = lat + 90, lo = lng + 180;
       if (la >= 180) la = 180 - 1e-10;
       if (lo >= 360) lo -= 360;
       if (la < 0) la = 0; if (lo < 0) lo = 0;
-      let code = '';
-      let res = 400;
+      let code = '', res = 400;
       for (let i = 0; i < len / 2; i++) {
         res /= 20;
-        const li = Math.floor(la / res), oi = Math.floor(lo / res);
-        code += OLC_ALPHABET[Math.min(li, 19)] + OLC_ALPHABET[Math.min(oi, 19)];
+        const li = Math.min(Math.floor(la / res), 19);
+        const oi = Math.min(Math.floor(lo / res), 19);
+        code += OLC_ALPHABET[li] + OLC_ALPHABET[oi];
         la -= li * res; lo -= oi * res;
       }
       return code;
     }
-
     function olcDecodeFull(code) {
-      // code: 8-15 chars, no '+', uppercase, all from alphabet
       let lat = 0, lng = 0, res = 400;
       for (let i = 0; i < Math.min(code.length, 10); i += 2) {
         res /= 20;
@@ -170,22 +216,17 @@
       }
       return [lat - 90 + latCell / 2, lng - 180 + lngCell / 2];
     }
-
     function decodePlusCode(text) {
       const m = text.toUpperCase().match(/([23456789CFGHJMPQRVWX0]{2,8})\+([23456789CFGHJMPQRVWX]{0,7})/);
       if (!m) return null;
       const prefix = m[1].replace(/0/g, '');
       const suffix = m[2];
       let full;
-      if (prefix.length === 8) {
-        full = prefix + suffix;
-      } else if (prefix.length >= 2 && prefix.length < 8) {
-        // short code: recover with Amsterdam reference
+      if (prefix.length === 8) full = prefix + suffix;
+      else if (prefix.length >= 2) {
         const refFull = olcEncode(OLC_REF[0], OLC_REF[1]);
         full = refFull.slice(0, 8 - prefix.length) + prefix + suffix;
-      } else {
-        return null;
-      }
+      } else return null;
       try { return olcDecodeFull(full); }
       catch (e) { return null; }
     }
@@ -212,6 +253,11 @@
       return null;
     }
 
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
     // ---------- Map ----------
     const map = L.map('map', { preferCanvas: true }).setView(AMSTERDAM, 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -219,13 +265,16 @@
       maxZoom: 19,
     }).addTo(map);
 
-    // Dedicated pane for measuring circles. With fillOpacity:1 + stroke:false
-    // on each circle, overlaps merge into one solid shape on the pane's canvas;
-    // the pane's CSS opacity then makes that merged shape translucent.
+    // Pane for measuring circles — overlaps merge into one shape via pane-level opacity
     const measuringPane = map.createPane('measuring');
     measuringPane.style.opacity = '0.35';
     measuringPane.style.zIndex = '410';
     const measuringRenderer = L.canvas({ pane: 'measuring' });
+
+    // Pane for locked voronoi zones — kept on top, persists across layer toggles
+    const lockedZonesPane = map.createPane('locked-zones');
+    lockedZonesPane.style.zIndex = '405';
+    const lockedZonesRenderer = L.canvas({ pane: 'locked-zones' });
 
     // ---------- Sidebar ----------
     const sidebar = document.getElementById('sidebar');
@@ -240,36 +289,79 @@
     });
 
     // ---------- Layer overlays ----------
-    const loadedLayers = {}; // file -> { file, label, geo, leafletLayer, visible, hasPoints }
+    // Each category file is split into two sub-layers: points (icons) and
+    // polygons (zones). Each gets its own checkbox + visibility persistence.
+    const loadedLayers = {}; // file -> { file, label, geo, points: SubLayer|null, polygons: SubLayer|null }
+    // SubLayer = { leafletLayer, visible }
 
-    const onEachFeature = (feature, layer) => {
+    function pinPopupHtmlForFeature(p) {
+      return `<b>${escapeHtml(p.name || '(unnamed)')}</b>${p.description ? '<br>' + escapeHtml(p.description) : ''}`;
+    }
+
+    function makeOnEachFeature(categoryFile, isPolygon) {
+      return (feature, layer) => {
+        const p = feature.properties || {};
+        layer.bindPopup(() => featurePopupHtml(categoryFile, feature, isPolygon));
+        layer.on('popupopen', e => attachFeaturePopupHandlers(e.popup.getElement(), categoryFile, feature, layer));
+      };
+    }
+
+    function featurePopupHtml(categoryFile, feature, isPolygon) {
       const p = feature.properties || {};
-      const html = `<b>${p.name || '(unnamed)'}</b>${p.description ? '<br>' + p.description : ''}`;
-      layer.bindPopup(html);
-    };
+      let lockSection = '';
+      if (isPolygon) {
+        const key = lockKeyFor(categoryFile, p.name);
+        const locked = lockedZones.has(key);
+        lockSection = `<div style="margin-top:8px"><button data-action="${locked ? 'unlock-zone' : 'lock-zone'}">${locked ? 'Unlock zone' : 'Lock zone'}</button></div>`;
+      }
+      return `<div class="feature-popup"><b>${escapeHtml(p.name || '(unnamed)')}</b>${p.description ? '<br>' + escapeHtml(p.description) : ''}${lockSection}</div>`;
+    }
 
-    function buildLayer(geo) {
+    function attachFeaturePopupHandlers(node, categoryFile, feature, layer) {
+      node.querySelectorAll('button[data-action="lock-zone"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          lockZone(categoryFile, feature);
+          layer.closePopup();
+        });
+      });
+      node.querySelectorAll('button[data-action="unlock-zone"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          unlockZone(lockKeyFor(categoryFile, feature.properties?.name));
+          layer.closePopup();
+        });
+      });
+    }
+
+    function buildSubLayer(geo, categoryFile, kind /* 'points' | 'polygons' */, opts = {}) {
       const styles = geo._styles || {};
       const styleFor = feature => {
         const sid = feature && feature.properties && feature.properties._styleId;
         return (sid && styles[sid]) || {};
       };
       return L.geoJSON(geo, {
+        pane: opts.pane,
+        renderer: opts.renderer,
         style: feature => {
           const s = styleFor(feature);
-          return {
+          const base = {
             color: s.color || '#444',
             weight: s.weight != null ? s.weight : 1,
             opacity: s.opacity != null ? s.opacity : 1,
             fillColor: s.fillColor || s.color || '#444',
             fillOpacity: s.fillOpacity != null ? s.fillOpacity : 0.2,
           };
+          if (opts.styleBoost) {
+            base.weight = base.weight + (opts.styleBoost.weight || 0);
+            base.fillOpacity = Math.min(1, base.fillOpacity + (opts.styleBoost.fillOpacity || 0));
+          }
+          return base;
         },
         pointToLayer: (feature, latlng) => {
           const s = styleFor(feature);
           if (s.iconUrl) {
             const size = Math.round(32 * (s.iconScale || 1));
             return L.marker(latlng, {
+              pane: opts.pane,
               icon: L.icon({
                 iconUrl: s.iconUrl,
                 iconSize: [size, size],
@@ -279,6 +371,8 @@
             });
           }
           return L.circleMarker(latlng, {
+            pane: opts.pane,
+            renderer: opts.renderer,
             radius: 6,
             color: s.color || '#004d00',
             weight: 1,
@@ -286,21 +380,46 @@
             fillOpacity: 0.85,
           });
         },
-        onEachFeature,
+        onEachFeature: makeOnEachFeature(categoryFile, kind === 'polygons'),
       });
     }
 
     function loadLayerVisibility() {
-      try { return JSON.parse(localStorage.getItem(LAYER_KEY) || '{}'); }
-      catch (e) { return {}; }
+      // v2 schema: { file: { points: bool, polygons: bool } }
+      // v1 schema: { file: bool }  (apply to both)
+      let parsed = {};
+      try { parsed = JSON.parse(localStorage.getItem(LAYER_KEY) || 'null') || {}; }
+      catch (e) {}
+      if (Object.keys(parsed).length === 0) {
+        try {
+          const legacy = JSON.parse(localStorage.getItem(LAYER_KEY_LEGACY) || '{}');
+          for (const [file, val] of Object.entries(legacy)) {
+            if (typeof val === 'boolean') parsed[file] = { points: val, polygons: val };
+          }
+        } catch (e) {}
+      }
+      const out = {};
+      for (const [file, val] of Object.entries(parsed)) {
+        if (typeof val === 'boolean') out[file] = { points: val, polygons: val };
+        else if (val && typeof val === 'object') {
+          out[file] = { points: !!val.points, polygons: !!val.polygons };
+        }
+      }
+      return out;
     }
     function saveLayerVisibility() {
       const v = {};
-      for (const file in loadedLayers) v[file] = loadedLayers[file].visible;
+      for (const file in loadedLayers) {
+        const L_ = loadedLayers[file];
+        v[file] = {
+          points: !!(L_.points && L_.points.visible),
+          polygons: !!(L_.polygons && L_.polygons.visible),
+        };
+      }
       localStorage.setItem(LAYER_KEY, JSON.stringify(v));
     }
 
-    const layerList = document.getElementById('layer-list');
+    const layerGrid = document.getElementById('layer-grid');
     const savedVisibility = loadLayerVisibility();
 
     fetch('data/manifest.json')
@@ -310,39 +429,82 @@
       )))
       .then(items => {
         for (const { cat, geo } of items) {
-          const leafletLayer = buildLayer(geo);
-          const hasPoints = (geo.features || []).some(f => f.geometry && f.geometry.type === 'Point');
-          const visible = Object.prototype.hasOwnProperty.call(savedVisibility, cat.file)
-            ? !!savedVisibility[cat.file]
-            : !!cat.default;
-          loadedLayers[cat.file] = {
-            file: cat.file, label: cat.label, geo, leafletLayer, visible, hasPoints,
-          };
-          if (visible) leafletLayer.addTo(map);
+          const pointFeatures = (geo.features || []).filter(f => f.geometry && f.geometry.type === 'Point');
+          const polyFeatures = (geo.features || []).filter(f => f.geometry && f.geometry.type !== 'Point');
+          const pointsGeo = pointFeatures.length ? { type: 'FeatureCollection', _styles: geo._styles, features: pointFeatures } : null;
+          const polysGeo = polyFeatures.length ? { type: 'FeatureCollection', _styles: geo._styles, features: polyFeatures } : null;
 
-          const row = document.createElement('label');
-          row.className = 'layer-row';
-          const cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.checked = visible;
-          cb.addEventListener('change', () => {
-            loadedLayers[cat.file].visible = cb.checked;
-            if (cb.checked) leafletLayer.addTo(map);
-            else map.removeLayer(leafletLayer);
-            saveLayerVisibility();
-          });
-          const name = document.createElement('span');
-          name.textContent = cat.label;
-          const count = document.createElement('span');
-          count.className = 'count';
-          count.textContent = geo.features.length;
-          row.append(cb, name, count);
-          layerList.appendChild(row);
+          const saved = savedVisibility[cat.file] || {};
+          const defaultOn = !!cat.default;
+
+          const cardEntry = { file: cat.file, label: cat.label, geo, points: null, polygons: null };
+          if (pointsGeo) {
+            const lyr = buildSubLayer(pointsGeo, cat.file, 'points');
+            const visible = saved.points !== undefined ? !!saved.points : defaultOn;
+            cardEntry.points = { leafletLayer: lyr, visible };
+            if (visible) lyr.addTo(map);
+          }
+          if (polysGeo) {
+            const lyr = buildSubLayer(polysGeo, cat.file, 'polygons');
+            const visible = saved.polygons !== undefined ? !!saved.polygons : defaultOn;
+            cardEntry.polygons = { leafletLayer: lyr, visible };
+            if (visible) lyr.addTo(map);
+          }
+          loadedLayers[cat.file] = cardEntry;
+
+          // Build the row in the layer grid: name + count, then two checkboxes
+          const nameEl = document.createElement('div');
+          nameEl.className = 'name';
+          const labelSpan = document.createElement('span');
+          labelSpan.textContent = cat.label;
+          const countSpan = document.createElement('span');
+          countSpan.className = 'count';
+          countSpan.textContent = (geo.features || []).length;
+          nameEl.append(labelSpan, countSpan);
+          layerGrid.appendChild(nameEl);
+
+          const iconCell = document.createElement('div');
+          iconCell.className = 'cb-cell';
+          const iconCb = document.createElement('input');
+          iconCb.type = 'checkbox';
+          if (cardEntry.points) {
+            iconCb.checked = cardEntry.points.visible;
+            iconCb.addEventListener('change', () => {
+              cardEntry.points.visible = iconCb.checked;
+              if (iconCb.checked) cardEntry.points.leafletLayer.addTo(map);
+              else map.removeLayer(cardEntry.points.leafletLayer);
+              saveLayerVisibility();
+            });
+          } else {
+            iconCb.disabled = true;
+          }
+          iconCell.appendChild(iconCb);
+          layerGrid.appendChild(iconCell);
+
+          const zoneCell = document.createElement('div');
+          zoneCell.className = 'cb-cell';
+          const zoneCb = document.createElement('input');
+          zoneCb.type = 'checkbox';
+          if (cardEntry.polygons) {
+            zoneCb.checked = cardEntry.polygons.visible;
+            zoneCb.addEventListener('change', () => {
+              cardEntry.polygons.visible = zoneCb.checked;
+              if (zoneCb.checked) cardEntry.polygons.leafletLayer.addTo(map);
+              else map.removeLayer(cardEntry.polygons.leafletLayer);
+              saveLayerVisibility();
+            });
+          } else {
+            zoneCb.disabled = true;
+          }
+          zoneCell.appendChild(zoneCb);
+          layerGrid.appendChild(zoneCell);
         }
-        // Restore measuring circles for any pins that had them saved
+
+        // Restore stored state that depends on layers being loaded
         for (const pin of pins.values()) {
           if (pin.measuringCategory) drawMeasuringCircles(pin);
         }
+        loadLockedZones();
         refreshAllPinPopups();
       })
       .catch(err => console.error('Failed to load layers:', err));
@@ -356,19 +518,23 @@
       const data = [...pins.values()].map(p => ({
         id: p.id, lat: p.lat, lng: p.lng,
         radius: p.radius, measuringCategory: p.measuringCategory,
+        locked: p.locked,
       }));
       localStorage.setItem(PIN_KEY, JSON.stringify(data));
     }
 
     function loadPins() {
-      try {
-        const data = JSON.parse(localStorage.getItem(PIN_KEY) || '[]');
-        for (const p of data) {
-          const pin = addPin(p.lat, p.lng, { id: p.id, save: false });
-          if (p.radius) setCircle(pin.id, p.radius, false);
-          if (p.measuringCategory) pin.measuringCategory = p.measuringCategory;
-        }
-      } catch (e) { console.warn('Failed to load pins:', e); }
+      // Read v2 first; fall back to v1
+      let data = [];
+      try { data = JSON.parse(localStorage.getItem(PIN_KEY) || 'null'); } catch (e) {}
+      if (!Array.isArray(data)) {
+        try { data = JSON.parse(localStorage.getItem('jetlag.pins.v1') || '[]'); } catch (e) { data = []; }
+      }
+      for (const p of (data || [])) {
+        const pin = addPin(p.lat, p.lng, { id: p.id, save: false, locked: !!p.locked });
+        if (p.radius) setCircle(pin.id, p.radius, false);
+        if (p.measuringCategory) pin.measuringCategory = p.measuringCategory;
+      }
     }
 
     function saveThermometers() {
@@ -397,14 +563,16 @@
         return `<button class="r-btn${pin.radius === r ? ' active' : ''}" data-r="${r}">${label}</button>`;
       }).join('');
       const noneActive = !pin.radius ? ' active' : '';
+      const customActive = pin.radius && !RADII.includes(pin.radius) ? ' active' : '';
+      const customValue = customActive ? pin.radius : '';
 
       const pointCats = Object.values(loadedLayers)
-        .filter(l => l.hasPoints)
+        .filter(l => l.points)
         .sort((a, b) => a.label.localeCompare(b.label));
       const measureOpts = `<option value="">— off —</option>` +
         pointCats.map(l => {
           const sel = pin.measuringCategory === l.file ? ' selected' : '';
-          return `<option value="${l.file}"${sel}>${l.label}</option>`;
+          return `<option value="${escapeHtml(l.file)}"${sel}>${escapeHtml(l.label)}</option>`;
         }).join('');
 
       const myThermometers = thermometers.filter(t => t.aId === id || t.bId === id);
@@ -416,18 +584,25 @@
           const otherId = t.aId === id ? t.bId : t.aId;
           const other = pins.get(otherId);
           const otherStr = other ? `${other.lat.toFixed(4)}, ${other.lng.toFixed(4)}` : '?';
-          return `<div class="row"><button data-action="remove-therm" data-tid="${t.id}">Remove (to ${otherStr})</button></div>`;
+          return `<div class="row"><button data-action="remove-therm" data-tid="${escapeHtml(t.id)}">Remove (to ${escapeHtml(otherStr)})</button></div>`;
         }).join('');
       } else {
         thermSection = `<div class="row"><button data-action="start-therm">Start thermometer</button></div>`;
       }
 
       return `
-        <div class="pin-popup" data-id="${id}">
-          <div><b>Pin</b> <span class="coords">${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}</span></div>
+        <div class="pin-popup" data-id="${escapeHtml(String(id))}">
+          <div class="header-row">
+            <div><b>Pin</b> <span class="coords">${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}</span></div>
+            <label class="lock-toggle"><input type="checkbox" data-action="toggle-lock"${pin.locked ? ' checked' : ''}> 🔒 lock</label>
+          </div>
 
           <div class="section-label">Radius</div>
           <div class="row">${radiusBtns}<button class="r-btn${noneActive}" data-r="">×</button></div>
+          <div class="row custom-radius">
+            <input type="number" min="0" placeholder="m" value="${customValue}">
+            <button data-action="set-custom-radius" class="${customActive ? 'active' : ''}">Set</button>
+          </div>
 
           <div class="section-label">Measuring circles</div>
           <select class="measure-sel">${measureOpts}</select>
@@ -448,6 +623,17 @@
           setCircle(id, r);
         });
       });
+      const customInput = node.querySelector('.custom-radius input');
+      const setCustomBtn = node.querySelector('button[data-action="set-custom-radius"]');
+      const applyCustom = () => {
+        if (!customInput) return;
+        const v = parseFloat(customInput.value);
+        if (isFinite(v) && v > 0) setCircle(id, Math.round(v));
+      };
+      if (setCustomBtn) setCustomBtn.addEventListener('click', applyCustom);
+      if (customInput) customInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); applyCustom(); }
+      });
       node.querySelectorAll('.measure-sel').forEach(sel => {
         sel.addEventListener('change', () => setMeasuring(id, sel.value || null));
       });
@@ -463,6 +649,9 @@
       node.querySelectorAll('button[data-action="remove"]').forEach(btn => {
         btn.addEventListener('click', () => removePin(id));
       });
+      node.querySelectorAll('input[data-action="toggle-lock"]').forEach(cb => {
+        cb.addEventListener('change', () => setPinLocked(id, cb.checked));
+      });
     }
 
     function refreshPinPopup(id) {
@@ -476,18 +665,18 @@
       for (const id of pins.keys()) refreshPinPopup(id);
     }
 
-    function addPin(lat, lng, { id = Date.now() + Math.random(), save = true } = {}) {
-      const marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+    function addPin(lat, lng, { id = Date.now() + Math.random(), save = true, locked = false } = {}) {
+      const marker = L.marker([lat, lng], { draggable: !locked }).addTo(map);
       const pin = {
         id, lat, lng, marker,
         circle: null, radius: null,
         measuringCategory: null, measuringCircles: [],
+        locked: !!locked,
       };
       pins.set(id, pin);
       marker.bindPopup(() => pinPopupHtml(id));
       marker.on('popupopen', e => {
         if (pendingThermometerFrom !== null && pendingThermometerFrom !== id) {
-          // This click is meant to complete a thermometer, not open a popup.
           completeThermometer(id);
           marker.closePopup();
           return;
@@ -503,26 +692,33 @@
           if (t.aId === id || t.bId === id) drawThermometer(t);
         }
         savePins();
+        refreshPinPopup(id);
       });
       if (save) savePins();
       return pin;
     }
 
+    function setPinLocked(id, locked) {
+      const pin = pins.get(id);
+      if (!pin) return;
+      pin.locked = !!locked;
+      if (pin.locked) pin.marker.dragging.disable();
+      else pin.marker.dragging.enable();
+      savePins();
+      refreshPinPopup(id);
+    }
+
     function removePin(id) {
       const pin = pins.get(id);
       if (!pin) return;
-      // measuring circles
       for (const c of pin.measuringCircles) map.removeLayer(c);
-      // thermometers involving this pin
       for (let i = thermometers.length - 1; i >= 0; i--) {
         if (thermometers[i].aId === id || thermometers[i].bId === id) {
           for (const layer of thermometers[i].layers) map.removeLayer(layer);
           thermometers.splice(i, 1);
         }
       }
-      // pending thermometer from this pin
       if (pendingThermometerFrom === id) cancelPendingThermometer();
-      // pin itself
       map.removeLayer(pin.marker);
       if (pin.circle) map.removeLayer(pin.circle);
       pins.delete(id);
@@ -545,16 +741,14 @@
       refreshPinPopup(id);
     }
 
-    // ---------- Measuring circles (matching-question visual) ----------
+    // ---------- Measuring circles (matching-question visualization) ----------
     function drawMeasuringCircles(pin) {
       for (const c of pin.measuringCircles) map.removeLayer(c);
       pin.measuringCircles = [];
       const layer = pin.measuringCategory && loadedLayers[pin.measuringCategory];
-      if (!layer) return;
+      if (!layer || !layer.geo) return;
       const points = layer.geo.features.filter(f => f.geometry && f.geometry.type === 'Point');
       if (points.length === 0) return;
-
-      // Single radius for every circle: the pin's distance to its nearest feature.
       let dNearest = Infinity;
       for (const f of points) {
         const [lng, lat] = f.geometry.coordinates;
@@ -562,7 +756,6 @@
         if (d < dNearest) dNearest = d;
       }
       if (!isFinite(dNearest) || dNearest === 0) return;
-
       for (const f of points) {
         const [lng, lat] = f.geometry.coordinates;
         const c = L.circle([lat, lng], {
@@ -588,13 +781,6 @@
 
     // ---------- Thermometers ----------
     function bisectorEndpoints(a, b) {
-      // Compute the perpendicular bisector in Web Mercator pixel space rather
-      // than in lat/lng degrees. Leaflet renders polylines as straight lines
-      // in Mercator, and Mercator is conformal — so a perpendicular drawn in
-      // Mercator pixels stays visually perpendicular to AB at any rendering
-      // zoom. Doing it in lat/lng (even with a cos-lat correction) skews the
-      // midpoint when A and B differ in latitude, because the y-axis in
-      // Mercator is non-linear in lat.
       const z = 18;
       const ptA = map.project(L.latLng(a.lat, a.lng), z);
       const ptB = map.project(L.latLng(b.lat, b.lng), z);
@@ -603,7 +789,6 @@
       const len = Math.sqrt(dx * dx + dy * dy);
       if (len === 0) return null;
       const px = -dy / len, py = dx / len;
-      // Extend by enough Mercator pixels at z=18 to span any plausible map view.
       const ext = 1e7;
       return [
         map.unproject(L.point(mid.x + px * ext, mid.y + py * ext), z),
@@ -618,9 +803,7 @@
       if (!a || !b) return;
       const aLL = L.latLng(a.lat, a.lng);
       const bLL = L.latLng(b.lat, b.lng);
-      const seg = L.polyline([aLL, bLL], {
-        color: '#d62728', weight: 2, opacity: 0.8,
-      }).addTo(map);
+      const seg = L.polyline([aLL, bLL], { color: '#d62728', weight: 2, opacity: 0.8 }).addTo(map);
       t.layers.push(seg);
       const ends = bisectorEndpoints(aLL, bLL);
       if (ends) {
@@ -634,26 +817,22 @@
     function startThermometerFrom(pinId) {
       pendingThermometerFrom = pinId;
       document.getElementById('therm-banner').style.display = 'flex';
-      // Close the popup so the user can tap another pin without dismissing this one's popup first
       const pin = pins.get(pinId);
       if (pin) pin.marker.closePopup();
       refreshAllPinPopups();
     }
-
     function cancelPendingThermometer() {
       const wasPending = pendingThermometerFrom;
       pendingThermometerFrom = null;
       document.getElementById('therm-banner').style.display = 'none';
       if (wasPending !== null) refreshPinPopup(wasPending);
     }
-
     function completeThermometer(secondPinId) {
       const aId = pendingThermometerFrom;
       if (aId === null || aId === secondPinId) {
         cancelPendingThermometer();
         return;
       }
-      // Avoid duplicate thermometer between the same pair
       const dup = thermometers.some(t =>
         (t.aId === aId && t.bId === secondPinId) ||
         (t.aId === secondPinId && t.bId === aId)
@@ -671,7 +850,6 @@
       document.getElementById('therm-banner').style.display = 'none';
       refreshAllPinPopups();
     }
-
     function removeThermometer(thermId) {
       const idx = thermometers.findIndex(t => t.id === thermId);
       if (idx < 0) return;
@@ -680,16 +858,71 @@
       saveThermometers();
       refreshAllPinPopups();
     }
-
     document.getElementById('cancel-pending-therm').addEventListener('click', cancelPendingThermometer);
 
-    // ---------- Tool buttons ----------
+    // ---------- Locked voronoi zones ----------
+    const lockedZones = new Map(); // key -> { categoryFile, name, leafletLayer }
+
+    function lockKeyFor(categoryFile, name) {
+      return `${categoryFile}::${name || ''}`;
+    }
+
+    function lockZone(categoryFile, feature) {
+      const name = feature.properties && feature.properties.name;
+      const key = lockKeyFor(categoryFile, name);
+      if (lockedZones.has(key)) return;
+      const single = {
+        type: 'FeatureCollection',
+        _styles: loadedLayers[categoryFile] && loadedLayers[categoryFile].geo._styles,
+        features: [feature],
+      };
+      const lyr = buildSubLayer(single, categoryFile, 'polygons', {
+        pane: 'locked-zones',
+        renderer: lockedZonesRenderer,
+        styleBoost: { weight: 2, fillOpacity: 0.25 },
+      });
+      lyr.addTo(map);
+      lockedZones.set(key, { categoryFile, name, leafletLayer: lyr });
+      saveLockedZones();
+    }
+
+    function unlockZone(key) {
+      const z = lockedZones.get(key);
+      if (!z) return;
+      map.removeLayer(z.leafletLayer);
+      lockedZones.delete(key);
+      saveLockedZones();
+    }
+
+    function saveLockedZones() {
+      const data = [...lockedZones.values()].map(z => ({
+        categoryFile: z.categoryFile, name: z.name,
+      }));
+      localStorage.setItem(LOCKED_ZONES_KEY, JSON.stringify(data));
+    }
+
+    function loadLockedZones() {
+      try {
+        const data = JSON.parse(localStorage.getItem(LOCKED_ZONES_KEY) || '[]');
+        for (const entry of data) {
+          const cat = loadedLayers[entry.categoryFile];
+          if (!cat || !cat.geo) continue;
+          const feature = cat.geo.features.find(f =>
+            f.properties && f.properties.name === entry.name &&
+            f.geometry && f.geometry.type !== 'Point'
+          );
+          if (feature) lockZone(entry.categoryFile, feature);
+        }
+      } catch (e) { console.warn('Failed to load locked zones:', e); }
+    }
+
+    // ---------- Tools ----------
     document.getElementById('drop-pin').addEventListener('click', () => {
       toggleSidebar(false);
       if (!navigator.geolocation) { alert('Geolocation is not available.'); return; }
       navigator.geolocation.getCurrentPosition(
         pos => {
-          const pin = addPin(pos.coords.latitude, pos.coords.longitude);
+          const pin = addPin(pos.coords.latitude, pos.coords.longitude, { locked: true });
           map.panTo([pin.lat, pin.lng]);
           pin.marker.openPopup();
         },
@@ -712,7 +945,7 @@
         alert('No coordinates found in clipboard:\n' + text.slice(0, 200));
         return;
       }
-      const pin = addPin(coords[0], coords[1]);
+      const pin = addPin(coords[0], coords[1], { locked: true });
       map.panTo([pin.lat, pin.lng]);
       pin.marker.openPopup();
     });
@@ -737,9 +970,73 @@
       prompt('Copy these pins:', text);
     });
 
+    document.getElementById('pin-here').addEventListener('click', () => {
+      const c = map.getCenter();
+      const pin = addPin(c.lat, c.lng, { locked: false });
+      pin.marker.openPopup();
+    });
+
+    // ---------- Position tracking ----------
+    let positionWatchId = null;
+    let positionMarker = null;
+    let positionAccuracyCircle = null;
+
+    function startTracking() {
+      if (positionWatchId !== null) return;
+      if (!navigator.geolocation) { alert('Geolocation is not available.'); return; }
+      positionWatchId = navigator.geolocation.watchPosition(
+        pos => updateTrackedPosition(pos.coords),
+        err => {
+          console.warn('Position tracking error:', err.message);
+          if (err.code === err.PERMISSION_DENIED) stopTracking();
+        },
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }
+      );
+      document.getElementById('track-location').classList.add('active');
+      localStorage.setItem(TRACK_KEY, '1');
+    }
+
+    function stopTracking() {
+      if (positionWatchId !== null) {
+        navigator.geolocation.clearWatch(positionWatchId);
+        positionWatchId = null;
+      }
+      if (positionMarker) { map.removeLayer(positionMarker); positionMarker = null; }
+      if (positionAccuracyCircle) { map.removeLayer(positionAccuracyCircle); positionAccuracyCircle = null; }
+      document.getElementById('track-location').classList.remove('active');
+      localStorage.setItem(TRACK_KEY, '0');
+    }
+
+    function updateTrackedPosition(coords) {
+      const { latitude, longitude, accuracy } = coords;
+      const ll = [latitude, longitude];
+      if (!positionMarker) {
+        positionMarker = L.circleMarker(ll, {
+          radius: 7, color: 'white', weight: 2, fillColor: '#0066cc', fillOpacity: 1,
+          interactive: false,
+        }).addTo(map);
+        positionAccuracyCircle = L.circle(ll, {
+          radius: accuracy || 10,
+          color: '#0066cc', weight: 1,
+          fillColor: '#0066cc', fillOpacity: 0.1,
+          interactive: false,
+        }).addTo(map);
+      } else {
+        positionMarker.setLatLng(ll);
+        positionAccuracyCircle.setLatLng(ll);
+        positionAccuracyCircle.setRadius(accuracy || 10);
+      }
+    }
+
+    document.getElementById('track-location').addEventListener('click', () => {
+      if (positionWatchId !== null) stopTracking();
+      else startTracking();
+    });
+
     // ---------- Init ----------
     loadPins();
     loadThermometers();
+    if (localStorage.getItem(TRACK_KEY) === '1') startTracking();
   </script>
 </body>
 </html>
