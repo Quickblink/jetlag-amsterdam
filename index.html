@@ -129,9 +129,13 @@
       box-sizing: border-box;
     }
     .pin-popup .therm-cancel { background: #d62728; color: white; border-color: #d62728; }
-    .pin-popup .custom-radius input {
-      width: 80px; padding: 5px; border: 1px solid #bbb;
-      border-radius: 4px; font-size: 13px;
+    .pin-popup .custom-radius input[type="range"] {
+      flex: 1; margin: 0;
+    }
+    .pin-popup .custom-display {
+      min-width: 64px; text-align: right;
+      font-size: 12px; color: #444;
+      font-variant-numeric: tabular-nums;
     }
 
     .feature-popup { min-width: 200px; }
@@ -338,9 +342,13 @@
         const sid = feature && feature.properties && feature.properties._styleId;
         return (sid && styles[sid]) || {};
       };
+      // Only include pane/renderer in options when actually set — passing
+      // `pane: undefined` overrides Leaflet's default and breaks rendering.
+      const childOpts = {};
+      if (opts.pane) childOpts.pane = opts.pane;
+      if (opts.renderer) childOpts.renderer = opts.renderer;
       return L.geoJSON(geo, {
-        pane: opts.pane,
-        renderer: opts.renderer,
+        ...childOpts,
         style: feature => {
           const s = styleFor(feature);
           const base = {
@@ -361,7 +369,7 @@
           if (s.iconUrl) {
             const size = Math.round(32 * (s.iconScale || 1));
             return L.marker(latlng, {
-              pane: opts.pane,
+              ...childOpts,
               icon: L.icon({
                 iconUrl: s.iconUrl,
                 iconSize: [size, size],
@@ -371,8 +379,7 @@
             });
           }
           return L.circleMarker(latlng, {
-            pane: opts.pane,
-            renderer: opts.renderer,
+            ...childOpts,
             radius: 6,
             color: s.color || '#004d00',
             weight: 1,
@@ -517,7 +524,8 @@
     function savePins() {
       const data = [...pins.values()].map(p => ({
         id: p.id, lat: p.lat, lng: p.lng,
-        radius: p.radius, measuringCategory: p.measuringCategory,
+        radius: p.radius, customRadius: p.customRadius,
+        measuringCategory: p.measuringCategory,
         locked: p.locked,
       }));
       localStorage.setItem(PIN_KEY, JSON.stringify(data));
@@ -532,6 +540,7 @@
       }
       for (const p of (data || [])) {
         const pin = addPin(p.lat, p.lng, { id: p.id, save: false, locked: !!p.locked });
+        if (p.customRadius) pin.customRadius = p.customRadius;
         if (p.radius) setCircle(pin.id, p.radius, false);
         if (p.measuringCategory) pin.measuringCategory = p.measuringCategory;
       }
@@ -555,6 +564,22 @@
       } catch (e) {}
     }
 
+    // Logarithmic slider for custom radius: 30 m .. 10 km.
+    const CUSTOM_R_MIN = 30, CUSTOM_R_MAX = 10000;
+    function sliderToRadius(v) {
+      const clamped = Math.max(0, Math.min(1, v));
+      return Math.round(CUSTOM_R_MIN * Math.pow(CUSTOM_R_MAX / CUSTOM_R_MIN, clamped));
+    }
+    function radiusToSlider(r) {
+      const v = Math.log(r / CUSTOM_R_MIN) / Math.log(CUSTOM_R_MAX / CUSTOM_R_MIN);
+      return Math.max(0, Math.min(1, v));
+    }
+    function formatRadius(m) {
+      if (m >= 10000) return (m / 1000).toFixed(0) + ' km';
+      if (m >= 1000) return (m / 1000).toFixed(1) + ' km';
+      return Math.round(m) + ' m';
+    }
+
     function pinPopupHtml(id) {
       const pin = pins.get(id);
 
@@ -563,8 +588,13 @@
         return `<button class="r-btn${pin.radius === r ? ' active' : ''}" data-r="${r}">${label}</button>`;
       }).join('');
       const noneActive = !pin.radius ? ' active' : '';
-      const customActive = pin.radius && !RADII.includes(pin.radius) ? ' active' : '';
-      const customValue = customActive ? pin.radius : '';
+      const isCustom = pin.radius && !RADII.includes(pin.radius);
+      const sliderValue = isCustom ? radiusToSlider(pin.radius).toFixed(3) : '0.5';
+      const sliderRow = isCustom ? `
+            <div class="row custom-radius">
+              <input type="range" min="0" max="1" step="0.001" value="${sliderValue}">
+              <span class="custom-display">${formatRadius(pin.radius)}</span>
+            </div>` : '';
 
       const pointCats = Object.values(loadedLayers)
         .filter(l => l.points)
@@ -598,11 +628,8 @@
           </div>
 
           <div class="section-label">Radius</div>
-          <div class="row">${radiusBtns}<button class="r-btn${noneActive}" data-r="">×</button></div>
-          <div class="row custom-radius">
-            <input type="number" min="0" placeholder="m" value="${customValue}">
-            <button data-action="set-custom-radius" class="${customActive ? 'active' : ''}">Set</button>
-          </div>
+          <div class="row">${radiusBtns}<button class="r-btn${isCustom ? ' active' : ''}" data-r="custom">Custom</button><button class="r-btn${noneActive}" data-r="">×</button></div>
+          ${sliderRow}
 
           <div class="section-label">Measuring circles</div>
           <select class="measure-sel">${measureOpts}</select>
@@ -617,23 +644,37 @@
     }
 
     function attachPopupHandlers(node, id) {
+      const pin = pins.get(id);
       node.querySelectorAll('button[data-r]').forEach(btn => {
         btn.addEventListener('click', () => {
-          const r = btn.dataset.r === '' ? null : parseInt(btn.dataset.r, 10);
-          setCircle(id, r);
+          const v = btn.dataset.r;
+          if (v === '') { setCircle(id, null); refreshPinPopup(id); return; }
+          if (v === 'custom') {
+            // Switch to custom mode. Restore last custom value if there is one,
+            // otherwise default to 1 km. Then refresh the popup so the slider
+            // becomes visible.
+            const initial = (pin && pin.radius && !RADII.includes(pin.radius))
+              ? pin.radius
+              : (pin && pin.customRadius) || 1000;
+            setCircle(id, initial);
+            refreshPinPopup(id);
+            return;
+          }
+          setCircle(id, parseInt(v, 10));
+          refreshPinPopup(id);
         });
       });
-      const customInput = node.querySelector('.custom-radius input');
-      const setCustomBtn = node.querySelector('button[data-action="set-custom-radius"]');
-      const applyCustom = () => {
-        if (!customInput) return;
-        const v = parseFloat(customInput.value);
-        if (isFinite(v) && v > 0) setCircle(id, Math.round(v));
-      };
-      if (setCustomBtn) setCustomBtn.addEventListener('click', applyCustom);
-      if (customInput) customInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); applyCustom(); }
-      });
+      const slider = node.querySelector('.custom-radius input[type="range"]');
+      const display = node.querySelector('.custom-display');
+      if (slider) {
+        slider.addEventListener('input', () => {
+          const r = sliderToRadius(parseFloat(slider.value));
+          if (display) display.textContent = formatRadius(r);
+          // Update the circle live without re-rendering the popup, so the
+          // slider keeps focus and the user can keep dragging.
+          setCircle(id, r);
+        });
+      }
       node.querySelectorAll('.measure-sel').forEach(sel => {
         sel.addEventListener('change', () => setMeasuring(id, sel.value || null));
       });
@@ -669,7 +710,7 @@
       const marker = L.marker([lat, lng], { draggable: !locked }).addTo(map);
       const pin = {
         id, lat, lng, marker,
-        circle: null, radius: null,
+        circle: null, radius: null, customRadius: null,
         measuringCategory: null, measuringCircles: [],
         locked: !!locked,
       };
@@ -732,13 +773,15 @@
       if (!pin) return;
       if (pin.circle) { map.removeLayer(pin.circle); pin.circle = null; }
       pin.radius = radius;
+      if (radius && !RADII.includes(radius)) pin.customRadius = radius;
       if (radius) {
         pin.circle = L.circle([pin.lat, pin.lng], {
           radius, color: '#0066cc', weight: 2, fillColor: '#0066cc', fillOpacity: 0.1,
         }).addTo(map);
       }
       if (save) savePins();
-      refreshPinPopup(id);
+      // No popup refresh here — callers refresh as needed. The slider input
+      // handler deliberately skips refresh so it keeps focus while dragging.
     }
 
     // ---------- Measuring circles (matching-question visualization) ----------
