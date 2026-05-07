@@ -98,12 +98,17 @@ function pinPopupHtml(id) {
   }).join('');
   const noneActive = !pin.radius ? ' active' : '';
   const isCustom = pin.radius && !RADII.includes(pin.radius);
+  // Always render the slider row in the DOM, just hidden until Custom is
+  // active. This way switching to/from Custom toggles a display style on an
+  // existing element instead of rebuilding the popup, which keeps the
+  // popup visually open and stable.
   const sliderValue = isCustom ? radiusToSlider(pin.radius).toFixed(3) : '0.5';
-  const sliderRow = isCustom ? `
-        <div class="row custom-radius">
+  const sliderDisplay = isCustom ? formatRadius(pin.radius) : formatRadius(CUSTOM_DEFAULT);
+  const sliderRow = `
+        <div class="row custom-radius" style="display: ${isCustom ? 'flex' : 'none'}">
           <input type="range" min="0" max="1" step="0.001" value="${sliderValue}">
-          <span class="custom-display">${formatRadius(pin.radius)}</span>
-        </div>` : '';
+          <span class="custom-display">${sliderDisplay}</span>
+        </div>`;
 
   const pointCats = Object.values(loadedLayers)
     .filter(l => l.points)
@@ -152,12 +157,36 @@ function pinPopupHtml(id) {
   `;
 }
 
+// Update the radius row in-place — preset active states + slider visibility
+// + slider value/display — so the popup doesn't get rebuilt and the user
+// doesn't see it visually flicker (or worse, lose focus on the slider).
+function setRadiusActive(node, pin) {
+  const buttons = node.querySelectorAll('button[data-r]');
+  for (const btn of buttons) {
+    btn.classList.remove('active');
+    const v = btn.dataset.r;
+    if (v === '' && !pin.radius) btn.classList.add('active');
+    else if (v === 'custom' && pin.radius && !RADII.includes(pin.radius)) btn.classList.add('active');
+    else if (v !== '' && v !== 'custom' && parseInt(v, 10) === pin.radius) btn.classList.add('active');
+  }
+  const sliderRow = node.querySelector('.custom-radius');
+  if (!sliderRow) return;
+  const isCustom = pin.radius && !RADII.includes(pin.radius);
+  sliderRow.style.display = isCustom ? 'flex' : 'none';
+  if (isCustom) {
+    const slider = sliderRow.querySelector('input[type="range"]');
+    const display = sliderRow.querySelector('.custom-display');
+    if (slider) slider.value = radiusToSlider(pin.radius).toFixed(3);
+    if (display) display.textContent = formatRadius(pin.radius);
+  }
+}
+
 function attachPopupHandlers(node, id) {
   const pin = pins.get(id);
   node.querySelectorAll('button[data-r]').forEach(btn => {
     btn.addEventListener('click', () => {
       const v = btn.dataset.r;
-      if (v === '') { setCircle(id, null); refreshPinPopup(id); return; }
+      if (v === '') { setCircle(id, null); setRadiusActive(node, pins.get(id)); return; }
       if (v === 'custom') {
         // Switch to custom mode. Use last custom value if there is one,
         // otherwise default to the slider midpoint (~548 m). 1000 would
@@ -166,11 +195,11 @@ function attachPopupHandlers(node, id) {
           ? pin.radius
           : ((pin && pin.customRadius) || CUSTOM_DEFAULT);
         setCircle(id, initial);
-        refreshPinPopup(id);
+        setRadiusActive(node, pins.get(id));
         return;
       }
       setCircle(id, parseInt(v, 10));
-      refreshPinPopup(id);
+      setRadiusActive(node, pins.get(id));
     });
   });
   const slider = node.querySelector('.custom-radius input[type="range"]');

@@ -12,6 +12,7 @@ html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
 .map-btn:active { background: #eee; }
 #menu-toggle { top: 10px; }
 #pin-here { top: 64px; }
+body.sidebar-open #pin-here { display: none; }
 
 .sidebar {
   position: absolute; top: 0; right: 0; bottom: 0;
