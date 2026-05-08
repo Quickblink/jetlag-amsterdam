@@ -7,7 +7,7 @@
     },
     {
       "file": "ferry_bus_stops.geojson",
-      "label": "Ferry Bus Stops",
+      "label": "Ferry & Bus Stops",
       "default": false,
       "informational": true
     },

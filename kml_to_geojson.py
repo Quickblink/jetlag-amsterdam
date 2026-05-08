@@ -195,6 +195,12 @@ SKIP_CATEGORIES = {"play_area", "transit_stations"}
 # can't ask questions against it.
 INFORMATIONAL_CATEGORIES = {"ferry_bus_stops"}
 
+# Display-label overrides for cases where filename.replace("_", " ").title()
+# doesn't read well. Keys are KML stems.
+LABEL_OVERRIDES = {
+    "ferry_bus_stops": "Ferry & Bus Stops",
+}
+
 
 def category_sort_key(category):
     if category in RULEBOOK_ORDER:
@@ -219,7 +225,7 @@ def main():
         print(f"{kml.name} -> data/{out.name} ({len(gj['features'])} features, {len(gj.get('_styles', {}))} styles)")
         entry = {
             "file": out.name,
-            "label": category.replace("_", " ").title(),
+            "label": LABEL_OVERRIDES.get(category, category.replace("_", " ").title()),
             # First-time visitors see an empty map. Once a user toggles layers,
             # their selection is persisted in localStorage and used on reload.
             "default": False,
