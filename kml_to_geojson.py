@@ -159,13 +159,44 @@ def kml_to_geojson(kml_path):
     return fc
 
 
+# Order matching the rulebook's grouping of question categories:
+#   Transit → Administrative (top-down) → Natural → Places of Interest →
+#   Public Utilities. play_area is pinned to the top as game-context.
+# Categories not listed here fall through to alphabetical at the end.
+RULEBOOK_ORDER = [
+    "play_area",
+    "transit_stations",
+    "stadsdelen",      # boroughs
+    "gebieden",        # area groupings
+    "wijken",          # districts
+    "buurten",         # neighbourhoods
+    "landmass",
+    "parks",
+    "amusement_parks",
+    "zoos",
+    "aquariums",
+    "golf",
+    "museums",
+    "movie_theaters",
+    "hospitals",
+    "libraries",
+    "consulates",
+]
+
+
+def category_sort_key(category):
+    if category in RULEBOOK_ORDER:
+        return (0, RULEBOOK_ORDER.index(category))
+    return (1, category)
+
+
 def main():
     src = Path(__file__).resolve().parent.parent / "maps"
     dst = Path(__file__).resolve().parent / "data"
     dst.mkdir(exist_ok=True)
 
     categories = []
-    for kml in sorted(src.glob("*.kml")):
+    for kml in sorted(src.glob("*.kml"), key=lambda p: category_sort_key(p.stem)):
         category = kml.stem
         gj = kml_to_geojson(kml)
         out = dst / f"{category}.geojson"

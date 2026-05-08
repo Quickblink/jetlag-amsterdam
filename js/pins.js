@@ -110,9 +110,9 @@ function pinPopupHtml(id) {
           <span class="custom-display">${sliderDisplay}</span>
         </div>`;
 
-  const pointCats = Object.values(loadedLayers)
-    .filter(l => l.points)
-    .sort((a, b) => a.label.localeCompare(b.label));
+  // Object.values preserves insertion order, which is the manifest order
+  // (Transit → Admin → Natural → Places of Interest → Public Utilities).
+  const pointCats = Object.values(loadedLayers).filter(l => l.points);
   const measureOpts = `<option value="">— off —</option>` +
     pointCats.map(l => {
       const sel = pin.measuringCategory === l.file ? ' selected' : '';
