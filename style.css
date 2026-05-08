@@ -12,7 +12,12 @@ html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
 .map-btn:active { background: #eee; }
 #menu-toggle { top: 10px; }
 #pin-here { top: 64px; }
-body.sidebar-open #pin-here { display: none; }
+#drop-pin { top: 118px; }
+#paste-pin { top: 172px; }
+/* Hide the map-side action buttons while the sidebar is open so they
+   don't sit in front of it. The hamburger stays visible so the user
+   can close the menu. */
+body.sidebar-open .map-btn:not(#menu-toggle) { display: none; }
 
 .sidebar {
   position: absolute; top: 0; right: 0; bottom: 0;
