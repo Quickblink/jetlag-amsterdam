@@ -12,15 +12,50 @@ const LOCKED_ZONES_KEY = 'jetlag.lockedZones.v1';
 // where SubLayer = { leafletLayer, visible }
 export const loadedLayers = {};
 
-// key -> { categoryFile, name, leafletLayer }
+// key -> { categoryFile, name, feature, leafletLayer }
 export const lockedZones = new Map();
 
 // Callback fired when loadLayers() finishes (after locked zones are restored).
 let layersLoadedCallback = () => {};
 export function onLayersLoaded(cb) { layersLoadedCallback = cb; }
 
-export function lockKeyFor(categoryFile, name) {
+// Polygon centroid as the simple vertex-mean of the outer boundary. Used
+// to disambiguate features that share a `name` (e.g. Wijken/Waterland has
+// 42 polygons all called "Waterland"). Returns [lat, lng] or null.
+function polygonCentroid(feature) {
+  if (!feature || !feature.geometry) return null;
+  const geom = feature.geometry;
+  let coords;
+  if (geom.type === 'Polygon') coords = geom.coordinates && geom.coordinates[0];
+  else if (geom.type === 'MultiPolygon') coords = geom.coordinates && geom.coordinates[0] && geom.coordinates[0][0];
+  if (!coords || coords.length === 0) return null;
+  let sumLat = 0, sumLng = 0;
+  for (const [lng, lat] of coords) { sumLat += lat; sumLng += lng; }
+  return [sumLat / coords.length, sumLng / coords.length];
+}
+
+// Lock key includes the centroid so duplicate-named features stay distinct.
+// Falls back to name-only when geometry is missing (shouldn't happen for
+// polygons but keeps the function total).
+export function lockKeyFor(categoryFile, feature) {
+  const c = polygonCentroid(feature);
+  if (c) return `${categoryFile}::${c[0].toFixed(5)},${c[1].toFixed(5)}`;
+  const name = feature && feature.properties && feature.properties.name;
   return `${categoryFile}::${name || ''}`;
+}
+
+// Find a polygon feature in a category by centroid (within ~2m tolerance).
+// Used by import flows.
+function findFeatureByCentroid(geo, lat, lng) {
+  if (!geo || lat == null || lng == null) return null;
+  const tol = 0.00002; // ~2 m
+  for (const f of (geo.features || [])) {
+    if (!f.geometry || f.geometry.type === 'Point') continue;
+    const c = polygonCentroid(f);
+    if (!c) continue;
+    if (Math.abs(c[0] - lat) < tol && Math.abs(c[1] - lng) < tol) return f;
+  }
+  return null;
 }
 
 // ---------- Feature popups (Lock/Unlock zone for polygons) ----------
@@ -29,7 +64,7 @@ function featurePopupHtml(categoryFile, feature, isPolygon) {
   const p = feature.properties || {};
   let lockSection = '';
   if (isPolygon) {
-    const key = lockKeyFor(categoryFile, p.name);
+    const key = lockKeyFor(categoryFile, feature);
     const locked = lockedZones.has(key);
     if (locked) {
       lockSection = `<div style="margin-top:8px"><button data-action="unlock-zone">Unlock zone</button> <button data-action="export-zone">Export</button></div>`;
@@ -49,14 +84,13 @@ function attachFeaturePopupHandlers(node, categoryFile, feature, layer) {
   });
   node.querySelectorAll('button[data-action="unlock-zone"]').forEach(btn => {
     btn.addEventListener('click', () => {
-      unlockZone(lockKeyFor(categoryFile, feature.properties && feature.properties.name));
+      unlockZone(lockKeyFor(categoryFile, feature));
       layer.closePopup();
     });
   });
   node.querySelectorAll('button[data-action="export-zone"]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const name = (feature.properties && feature.properties.name) || '';
-      shareText('Jetlag locked zone', exportZoneText(categoryFile, name));
+      shareText('Jetlag locked zone', exportZoneText(categoryFile, feature));
       layer.closePopup();
     });
   });
@@ -269,7 +303,7 @@ export async function loadLayers() {
 
 function lockZone(categoryFile, feature) {
   const name = feature.properties && feature.properties.name;
-  const key = lockKeyFor(categoryFile, name);
+  const key = lockKeyFor(categoryFile, feature);
   if (lockedZones.has(key)) return;
   const single = {
     type: 'FeatureCollection',
@@ -280,7 +314,7 @@ function lockZone(categoryFile, feature) {
     styleBoost: { weight: 2, fillOpacity: 0.25 },
   });
   lyr.addTo(map);
-  lockedZones.set(key, { categoryFile, name, leafletLayer: lyr });
+  lockedZones.set(key, { categoryFile, name, feature, leafletLayer: lyr });
   saveLockedZones();
 }
 
@@ -293,9 +327,10 @@ function unlockZone(key) {
 }
 
 function saveLockedZones() {
-  const data = [...lockedZones.values()].map(z => ({
-    categoryFile: z.categoryFile, name: z.name,
-  }));
+  const data = [...lockedZones.values()].map(z => {
+    const c = polygonCentroid(z.feature) || [null, null];
+    return { categoryFile: z.categoryFile, name: z.name, lat: c[0], lng: c[1] };
+  });
   localStorage.setItem(LOCKED_ZONES_KEY, JSON.stringify(data));
 }
 
@@ -305,10 +340,18 @@ function loadLockedZones() {
     for (const entry of data) {
       const cat = loadedLayers[entry.categoryFile];
       if (!cat || !cat.geo) continue;
-      const feature = cat.geo.features.find(f =>
-        f.properties && f.properties.name === entry.name &&
-        f.geometry && f.geometry.type !== 'Point'
-      );
+      let feature = null;
+      if (entry.lat != null && entry.lng != null) {
+        feature = findFeatureByCentroid(cat.geo, entry.lat, entry.lng);
+      }
+      if (!feature && entry.name) {
+        // Pre-centroid entries: best-effort name match (first hit wins for
+        // duplicate-named features — the centroid will be stored on next save).
+        feature = cat.geo.features.find(f =>
+          f.properties && f.properties.name === entry.name &&
+          f.geometry && f.geometry.type !== 'Point'
+        );
+      }
       if (feature) lockZone(entry.categoryFile, feature);
     }
   } catch (e) { console.warn('Failed to load locked zones:', e); }
@@ -316,33 +359,44 @@ function loadLockedZones() {
 
 // ---------- Zone export / import ----------
 //
-//   jetlag zone <category> <name>
+//   jetlag zone <category> <name> @<lat>,<lng>
 //
-// Category is the basename without the .geojson extension.
+// Category is the basename without the .geojson extension. The centroid
+// coordinates disambiguate zones that share a name (e.g. Wijken/Waterland
+// has 42 polygons all called "Waterland").
 
-export function exportZoneText(categoryFile, name) {
+export function exportZoneText(categoryFile, feature) {
   const cat = categoryFile.replace(/\.geojson$/, '');
-  return `jetlag zone ${cat} ${name}`;
+  const name = (feature && feature.properties && feature.properties.name) || '';
+  const c = polygonCentroid(feature);
+  const coords = c ? ` @${c[0].toFixed(5)},${c[1].toFixed(5)}` : '';
+  return `jetlag zone ${cat} ${name}${coords}`;
 }
 
 export function formatAllZonesExport() {
   const lines = [];
   for (const z of lockedZones.values()) {
-    lines.push(exportZoneText(z.categoryFile, z.name));
+    if (z.feature) lines.push(exportZoneText(z.categoryFile, z.feature));
   }
   return lines.join('\n');
 }
 
-// Lock a zone given the category basename + the polygon's name. Used by
-// import flows. Returns true on success.
-export function lockZoneByName(category, name) {
+// Lock a zone given the category basename + name + optional centroid. Used
+// by import flows. Centroid is preferred; name is the fallback.
+export function lockZoneByName(category, name, lat, lng) {
   const file = category.endsWith('.geojson') ? category : category + '.geojson';
   const cat = loadedLayers[file];
   if (!cat || !cat.geo) return false;
-  const feature = cat.geo.features.find(f =>
-    f.properties && f.properties.name === name &&
-    f.geometry && f.geometry.type !== 'Point'
-  );
+  let feature = null;
+  if (lat != null && lng != null) {
+    feature = findFeatureByCentroid(cat.geo, lat, lng);
+  }
+  if (!feature && name) {
+    feature = cat.geo.features.find(f =>
+      f.properties && f.properties.name === name &&
+      f.geometry && f.geometry.type !== 'Point'
+    );
+  }
   if (!feature) return false;
   lockZone(file, feature);
   return true;
@@ -352,8 +406,16 @@ export function lockZoneByName(category, name) {
 export function parseZonesFromText(text) {
   const out = [];
   for (const raw of (text || '').split(/\r?\n/)) {
-    const m = raw.trim().match(/^jetlag\s+zone\s+(\S+)\s+(.+)$/i);
-    if (m) out.push({ category: m[1], name: m[2] });
+    const line = raw.trim();
+    let m;
+    if ((m = line.match(/^jetlag\s+zone\s+(\S+)\s+(.+?)\s+@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\s*$/i))) {
+      out.push({
+        category: m[1], name: m[2],
+        lat: parseFloat(m[3]), lng: parseFloat(m[4]),
+      });
+    } else if ((m = line.match(/^jetlag\s+zone\s+(\S+)\s+(.+)$/i))) {
+      out.push({ category: m[1], name: m[2] });
+    }
   }
   return out;
 }

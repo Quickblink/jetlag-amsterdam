@@ -47,7 +47,7 @@ document.getElementById('paste-pin').addEventListener('click', async () => {
   if (pinsParsed.pins.length || pinsParsed.thermometers.length || zonesParsed.length) {
     const firstPin = applyImportedPins(pinsParsed);
     let zonesAdded = 0;
-    for (const z of zonesParsed) if (lockZoneByName(z.category, z.name)) zonesAdded++;
+    for (const z of zonesParsed) if (lockZoneByName(z.category, z.name, z.lat, z.lng)) zonesAdded++;
     if (firstPin) {
       map.panTo([firstPin.lat, firstPin.lng]);
       firstPin.marker.openPopup();
