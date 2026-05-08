@@ -112,7 +112,9 @@ function pinPopupHtml(id) {
 
   // Object.values preserves insertion order, which is the manifest order
   // (Transit → Admin → Natural → Places of Interest → Public Utilities).
-  const pointCats = Object.values(loadedLayers).filter(l => l.points);
+  // Informational categories (e.g. ferry_bus_stops) are excluded — you can
+  // see them on the map but can't ask measuring questions against them.
+  const pointCats = Object.values(loadedLayers).filter(l => l.points && !l.informational);
   const measureOpts = `<option value="">— off —</option>` +
     pointCats.map(l => {
       const sel = pin.measuringCategory === l.file ? ' selected' : '';

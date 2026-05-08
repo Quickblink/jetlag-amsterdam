@@ -224,26 +224,28 @@ export async function loadLayers() {
 
     const saved = savedVisibility[cat.file] || {};
     const defaultOn = !!cat.default;
-    // play_area is the game boundary — kept on the map as orientation context
-    // but not exposed as a togglable row in the sidebar.
-    const isAlwaysOn = cat.file === 'play_area.geojson';
 
-    const cardEntry = { file: cat.file, label: cat.label, geo, points: null, polygons: null };
+    const cardEntry = {
+      file: cat.file, label: cat.label, geo,
+      points: null, polygons: null,
+      // Informational categories appear in the sidebar but are excluded
+      // from the pin popup's measuring-circles dropdown — set in
+      // manifest.json by the converter.
+      informational: !!cat.informational,
+    };
     if (pointsGeo) {
       const lyr = buildSubLayer(pointsGeo, cat.file, 'points');
-      const visible = isAlwaysOn ? true : (saved.points !== undefined ? !!saved.points : defaultOn);
+      const visible = saved.points !== undefined ? !!saved.points : defaultOn;
       cardEntry.points = { leafletLayer: lyr, visible };
       if (visible) lyr.addTo(map);
     }
     if (polysGeo) {
       const lyr = buildSubLayer(polysGeo, cat.file, 'polygons');
-      const visible = isAlwaysOn ? true : (saved.polygons !== undefined ? !!saved.polygons : defaultOn);
+      const visible = saved.polygons !== undefined ? !!saved.polygons : defaultOn;
       cardEntry.polygons = { leafletLayer: lyr, visible };
       if (visible) lyr.addTo(map);
     }
     loadedLayers[cat.file] = cardEntry;
-
-    if (isAlwaysOn) continue;
 
     // Layer-grid row: name + count, then two checkboxes. The count is
     // max(points, polygons) rather than the sum, because most categories

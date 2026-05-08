@@ -161,11 +161,11 @@ def kml_to_geojson(kml_path):
 
 # Order matching the rulebook's grouping of question categories:
 #   Transit → Administrative (top-down) → Natural → Places of Interest →
-#   Public Utilities. play_area is pinned to the top as game-context.
+#   Public Utilities.
 # Categories not listed here fall through to alphabetical at the end.
 RULEBOOK_ORDER = [
-    "play_area",
-    "transit_stations",
+    "rail_stations",
+    "ferry_bus_stops",
     "stadsdelen",      # boroughs
     "gebieden",        # area groupings
     "wijken",          # districts
@@ -183,6 +183,18 @@ RULEBOOK_ORDER = [
     "consulates",
 ]
 
+# KMLs that exist in maps/ but are intentionally excluded from the manifest:
+#   play_area       — the game boundary, not a togglable category.
+#   transit_stations — superseded by rail_stations + ferry_bus_stops.
+# Their KMLs are left in maps/ untouched; they just aren't loaded by the
+# webmap.
+SKIP_CATEGORIES = {"play_area", "transit_stations"}
+
+# Sidebar-visible but intentionally excluded from the matching/measuring
+# pin-popup dropdown — i.e. you can show the layer for orientation but
+# can't ask questions against it.
+INFORMATIONAL_CATEGORIES = {"ferry_bus_stops"}
+
 
 def category_sort_key(category):
     if category in RULEBOOK_ORDER:
@@ -198,17 +210,30 @@ def main():
     categories = []
     for kml in sorted(src.glob("*.kml"), key=lambda p: category_sort_key(p.stem)):
         category = kml.stem
+        if category in SKIP_CATEGORIES:
+            print(f"{kml.name} -> skipped (in SKIP_CATEGORIES)")
+            continue
         gj = kml_to_geojson(kml)
         out = dst / f"{category}.geojson"
         out.write_text(json.dumps(gj, separators=(",", ":")))
         print(f"{kml.name} -> data/{out.name} ({len(gj['features'])} features, {len(gj.get('_styles', {}))} styles)")
-        categories.append({
+        entry = {
             "file": out.name,
             "label": category.replace("_", " ").title(),
             # First-time visitors see an empty map. Once a user toggles layers,
             # their selection is persisted in localStorage and used on reload.
             "default": False,
-        })
+        }
+        if category in INFORMATIONAL_CATEGORIES:
+            entry["informational"] = True
+        categories.append(entry)
+
+    # Clean up GeoJSONs for categories we no longer emit (so old browser
+    # state can't fetch a stale file).
+    for stale in (dst.glob("*.geojson")):
+        if stale.stem in SKIP_CATEGORIES:
+            stale.unlink()
+            print(f"removed stale data/{stale.name}")
 
     (dst / "manifest.json").write_text(json.dumps({"categories": categories}, indent=2))
     print(f"Wrote data/manifest.json with {len(categories)} categories")

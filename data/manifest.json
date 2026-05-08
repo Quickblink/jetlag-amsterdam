@@ -1,14 +1,15 @@
 {
   "categories": [
     {
-      "file": "play_area.geojson",
-      "label": "Play Area",
+      "file": "rail_stations.geojson",
+      "label": "Rail Stations",
       "default": false
     },
     {
-      "file": "transit_stations.geojson",
-      "label": "Transit Stations",
-      "default": false
+      "file": "ferry_bus_stops.geojson",
+      "label": "Ferry Bus Stops",
+      "default": false,
+      "informational": true
     },
     {
       "file": "stadsdelen.geojson",
