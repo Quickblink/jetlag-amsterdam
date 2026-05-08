@@ -412,6 +412,37 @@ export function lockZoneByName(category, name, lat, lng) {
   return true;
 }
 
+// Reset: drop every locked zone and clear the corresponding storage key.
+export function clearAllLockedZones() {
+  for (const z of lockedZones.values()) {
+    if (z.leafletLayer) map.removeLayer(z.leafletLayer);
+  }
+  lockedZones.clear();
+  localStorage.removeItem(LOCKED_ZONES_KEY);
+}
+
+// Reset: turn every category layer off (without touching the converter's
+// defaults) and clear the visibility key. Updates the sidebar checkboxes
+// in place so the UI reflects the new state.
+export function resetLayerVisibility() {
+  for (const file in loadedLayers) {
+    const L_ = loadedLayers[file];
+    if (L_.points && L_.points.visible) {
+      map.removeLayer(L_.points.leafletLayer);
+      L_.points.visible = false;
+    }
+    if (L_.polygons && L_.polygons.visible) {
+      map.removeLayer(L_.polygons.leafletLayer);
+      L_.polygons.visible = false;
+    }
+  }
+  document.querySelectorAll('#layer-grid .cb-cell input').forEach(cb => {
+    if (!cb.disabled) cb.checked = false;
+  });
+  localStorage.removeItem(LAYER_KEY);
+  localStorage.removeItem(LAYER_KEY_LEGACY);
+}
+
 // Parse jetlag-zone lines from arbitrary text.
 export function parseZonesFromText(text) {
   const out = [];

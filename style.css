@@ -79,6 +79,8 @@ body.sidebar-open .map-btn:not(#menu-toggle) { display: none; }
 .tool-btn + .tool-btn { margin-top: 8px; }
 .tool-btn:active { background: #eee; }
 .tool-btn.active { background: #0066cc; color: white; border-color: #0066cc; }
+.tool-btn.destructive { color: #d62728; border-color: #d62728; }
+.tool-btn.destructive:active { background: #fdf0f0; }
 
 .therm-banner {
   position: absolute; top: 10px; left: 10px;

@@ -1,13 +1,15 @@
 // Sidebar tool buttons (drop pin, paste pin, export pins, viewport-center
 // pin) and live position tracking. Attaches DOM handlers at module load.
 
-import { map, toggleSidebar } from './map.js';
+import { map, AMSTERDAM, toggleSidebar } from './map.js';
 import {
   addPin, pins,
   parsePinsFromText, applyImportedPins, formatAllPinsExport,
+  clearAllPinsAndThermometers,
 } from './pins.js';
 import {
   lockedZones, lockZoneByName, parseZonesFromText, formatAllZonesExport,
+  clearAllLockedZones, resetLayerVisibility,
 } from './layers.js';
 import { parseCoords, shareText } from './coords.js';
 
@@ -111,7 +113,7 @@ function startTracking() {
   localStorage.setItem(TRACK_KEY, '1');
 }
 
-function stopTracking() {
+export function stopTracking() {
   if (positionWatchId !== null) {
     navigator.geolocation.clearWatch(positionWatchId);
     positionWatchId = null;
@@ -151,3 +153,19 @@ document.getElementById('track-location').addEventListener('click', () => {
 export function initTrackingFromStorage() {
   if (localStorage.getItem(TRACK_KEY) === '1') startTracking();
 }
+
+// ---------- Reset everything ----------
+document.getElementById('reset-all').addEventListener('click', () => {
+  if (!confirm(
+    'Reset everything?\n\n' +
+    'This will remove all pins, thermometers, and locked zones, ' +
+    'turn off every layer, stop tracking, and recenter the map. ' +
+    'Cannot be undone.'
+  )) return;
+  clearAllPinsAndThermometers();
+  clearAllLockedZones();
+  resetLayerVisibility();
+  stopTracking();
+  map.setView(AMSTERDAM, 12);
+  toggleSidebar(false);
+});

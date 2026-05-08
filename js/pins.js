@@ -557,6 +557,31 @@ function removeThermometer(thermId) {
 
 document.getElementById('cancel-pending-therm').addEventListener('click', cancelPendingThermometer);
 
+// Reset everything: tear down all pins, thermometers, pending state, and
+// clear the relevant localStorage keys. Used by the sidebar Reset button.
+export function clearAllPinsAndThermometers() {
+  for (const t of thermometers) {
+    for (const layer of t.layers) map.removeLayer(layer);
+  }
+  thermometers.length = 0;
+  pendingThermometerFrom = null;
+  document.getElementById('therm-banner').style.display = 'none';
+
+  for (const pin of pins.values()) {
+    if (pin.marker) map.removeLayer(pin.marker);
+    if (pin.circle) map.removeLayer(pin.circle);
+    for (const c of pin.measuringCircles) map.removeLayer(c);
+  }
+  pins.clear();
+  // Drop renderer references so a future pin with the same id (unlikely
+  // since ids are timestamps) gets a fresh one.
+  measuringRenderers.clear();
+
+  localStorage.removeItem(PIN_KEY);
+  localStorage.removeItem(THERM_KEY);
+  localStorage.removeItem('jetlag.pins.v1'); // legacy
+}
+
 // ---------- Export / import format ----------
 // One line per item, prefixed with "jetlag <type>". Compact + parseable.
 //
