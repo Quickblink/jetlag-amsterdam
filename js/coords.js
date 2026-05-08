@@ -82,3 +82,20 @@ export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+// Web Share API on Android (one tap into WhatsApp/Signal/etc), with a
+// clipboard-write fallback, and a prompt() last resort.
+export async function shareText(title, text) {
+  if (navigator.share) {
+    try { await navigator.share({ title, text }); return; }
+    catch (e) { if (e.name !== 'AbortError') console.warn(e); }
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Copied to clipboard.');
+      return;
+    } catch (e) { console.warn(e); }
+  }
+  prompt('Copy this text:', text);
+}

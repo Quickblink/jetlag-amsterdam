@@ -3,7 +3,7 @@
 
 import { map, measuringRenderer } from './map.js';
 import { loadedLayers } from './layers.js';
-import { escapeHtml } from './coords.js';
+import { escapeHtml, shareText } from './coords.js';
 
 const RADII = [250, 500, 1000, 2000, 5000, 10000];
 const PIN_KEY = 'jetlag.pins.v2';
@@ -152,7 +152,7 @@ function pinPopupHtml(id) {
       ${thermSection}
 
       <hr>
-      <div class="row"><button data-action="remove">Remove pin</button></div>
+      <div class="row"><button data-action="export-pin">Export</button><button data-action="remove">Remove pin</button></div>
     </div>
   `;
 }
@@ -227,6 +227,9 @@ function attachPopupHandlers(node, id) {
   });
   node.querySelectorAll('button[data-action="remove"]').forEach(btn => {
     btn.addEventListener('click', () => removePin(id));
+  });
+  node.querySelectorAll('button[data-action="export-pin"]').forEach(btn => {
+    btn.addEventListener('click', () => shareText('Jetlag pin', exportPinText(id)));
   });
   node.querySelectorAll('input[data-action="toggle-lock"]').forEach(cb => {
     cb.addEventListener('change', () => setPinLocked(id, cb.checked));
@@ -423,25 +426,34 @@ function cancelPendingThermometer() {
   if (wasPending !== null) refreshPinPopup(wasPending);
 }
 
+// Create a thermometer link between two existing pins. Returns the new
+// thermometer object, or null if the pair already had one or either pin is
+// missing. Public so import flows can call it without going through pending
+// mode.
+export function createThermometer(aId, bId) {
+  if (aId === bId || !pins.has(aId) || !pins.has(bId)) return null;
+  const dup = thermometers.some(t =>
+    (t.aId === aId && t.bId === bId) ||
+    (t.aId === bId && t.bId === aId)
+  );
+  if (dup) return null;
+  const t = {
+    id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+    aId, bId, layers: [],
+  };
+  thermometers.push(t);
+  drawThermometer(t);
+  saveThermometers();
+  return t;
+}
+
 function completeThermometer(secondPinId) {
   const aId = pendingThermometerFrom;
   if (aId === null || aId === secondPinId) {
     cancelPendingThermometer();
     return;
   }
-  const dup = thermometers.some(t =>
-    (t.aId === aId && t.bId === secondPinId) ||
-    (t.aId === secondPinId && t.bId === aId)
-  );
-  if (!dup) {
-    const t = {
-      id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-      aId, bId: secondPinId, layers: [],
-    };
-    thermometers.push(t);
-    drawThermometer(t);
-    saveThermometers();
-  }
+  createThermometer(aId, secondPinId);
   pendingThermometerFrom = null;
   document.getElementById('therm-banner').style.display = 'none';
   refreshAllPinPopups();
@@ -457,3 +469,131 @@ function removeThermometer(thermId) {
 }
 
 document.getElementById('cancel-pending-therm').addEventListener('click', cancelPendingThermometer);
+
+// ---------- Export / import format ----------
+// One line per item, prefixed with "jetlag <type>". Compact + parseable.
+//
+//   jetlag pin <lat>, <lng> [r=<radius>] [m=<category>] [locked]
+//   jetlag therm <lat>, <lng> <-> <lat>, <lng>
+//   jetlag zone <category> <name>     (handled in layers.js)
+
+function formatExportRadius(m) {
+  if (m >= 1000 && m % 1000 === 0) return (m / 1000) + 'km';
+  if (m >= 1000) return (Math.round(m) / 1000) + 'km';
+  return Math.round(m) + 'm';
+}
+
+function parseExportRadius(s) {
+  const m = String(s).trim().match(/^(\d+(?:\.\d+)?)(km|m)?$/i);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  if (m[2] && m[2].toLowerCase() === 'km') n *= 1000;
+  return Math.round(n);
+}
+
+function coordKey(lat, lng) {
+  return `${lat.toFixed(6)},${lng.toFixed(6)}`;
+}
+
+function formatPinLine(pin) {
+  const attrs = [];
+  if (pin.radius) attrs.push(`r=${formatExportRadius(pin.radius)}`);
+  if (pin.measuringCategory) {
+    attrs.push(`m=${pin.measuringCategory.replace(/\.geojson$/, '')}`);
+  }
+  if (pin.locked) attrs.push('locked');
+  const tail = attrs.length ? ' ' + attrs.join(' ') : '';
+  return `jetlag pin ${pin.lat.toFixed(6)}, ${pin.lng.toFixed(6)}${tail}`;
+}
+
+function formatThermLine(a, b) {
+  return `jetlag therm ${a.lat.toFixed(6)}, ${a.lng.toFixed(6)} <-> ${b.lat.toFixed(6)}, ${b.lng.toFixed(6)}`;
+}
+
+// Single pin's export text — also includes any thermometer partners.
+export function exportPinText(id) {
+  const pin = pins.get(id);
+  if (!pin) return '';
+  const lines = [formatPinLine(pin)];
+  const myTherms = thermometers.filter(t => t.aId === id || t.bId === id);
+  for (const t of myTherms) {
+    const other = pins.get(t.aId === id ? t.bId : t.aId);
+    if (!other) continue;
+    lines.push(formatPinLine(other));
+    // Always emit the original pin first, then partner
+    const a = t.aId === id ? pin : other;
+    const b = t.aId === id ? other : pin;
+    lines.push(formatThermLine(a, b));
+  }
+  return lines.join('\n');
+}
+
+// Export all pins + therms (not zones — those are handled in layers.js).
+export function formatAllPinsExport() {
+  const lines = [];
+  for (const pin of pins.values()) lines.push(formatPinLine(pin));
+  for (const t of thermometers) {
+    const a = pins.get(t.aId);
+    const b = pins.get(t.bId);
+    if (a && b) lines.push(formatThermLine(a, b));
+  }
+  return lines.join('\n');
+}
+
+// ---------- Import ----------
+
+// Parse a block of jetlag-format text into structured objects.
+export function parsePinsFromText(text) {
+  const out = { pins: [], thermometers: [] };
+  for (const raw of (text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    let m;
+    if ((m = line.match(/^jetlag\s+pin\s+(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(.*)$/i))) {
+      const lat = parseFloat(m[1]);
+      const lng = parseFloat(m[2]);
+      const attrs = (m[3] || '').trim().split(/\s+/).filter(Boolean);
+      const p = { lat, lng };
+      for (const a of attrs) {
+        if (a === 'locked') p.locked = true;
+        else if (a.startsWith('r=')) {
+          const r = parseExportRadius(a.slice(2));
+          if (r != null) p.radius = r;
+        } else if (a.startsWith('m=')) {
+          p.measuringCategory = a.slice(2) + '.geojson';
+        }
+      }
+      out.pins.push(p);
+    } else if ((m = line.match(/^jetlag\s+therm\s+(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*<->\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i))) {
+      out.thermometers.push({
+        a: { lat: parseFloat(m[1]), lng: parseFloat(m[2]) },
+        b: { lat: parseFloat(m[3]), lng: parseFloat(m[4]) },
+      });
+    }
+  }
+  return out;
+}
+
+// Apply parsed pin/therm data to the map. Returns the first created pin
+// (caller can pan to it / open its popup).
+export function applyImportedPins(parsed) {
+  const byCoord = new Map();
+  let firstPin = null;
+  for (const p of parsed.pins) {
+    const pin = addPin(p.lat, p.lng, { locked: !!p.locked });
+    if (p.radius) setCircle(pin.id, p.radius);
+    if (p.measuringCategory && loadedLayers[p.measuringCategory]) {
+      pin.measuringCategory = p.measuringCategory;
+      drawMeasuringCircles(pin);
+    }
+    byCoord.set(coordKey(p.lat, p.lng), pin);
+    if (!firstPin) firstPin = pin;
+  }
+  for (const t of parsed.thermometers) {
+    const a = byCoord.get(coordKey(t.a.lat, t.a.lng));
+    const b = byCoord.get(coordKey(t.b.lat, t.b.lng));
+    if (a && b) createThermometer(a.id, b.id);
+  }
+  savePins();
+  return firstPin;
+}

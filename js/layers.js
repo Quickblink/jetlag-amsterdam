@@ -2,7 +2,7 @@
 // sub-layers), the layer-toggle UI, and locked voronoi zones.
 
 import { map } from './map.js';
-import { escapeHtml } from './coords.js';
+import { escapeHtml, shareText } from './coords.js';
 
 const LAYER_KEY = 'jetlag.layers.v2';
 const LAYER_KEY_LEGACY = 'jetlag.layers.v1';
@@ -31,7 +31,11 @@ function featurePopupHtml(categoryFile, feature, isPolygon) {
   if (isPolygon) {
     const key = lockKeyFor(categoryFile, p.name);
     const locked = lockedZones.has(key);
-    lockSection = `<div style="margin-top:8px"><button data-action="${locked ? 'unlock-zone' : 'lock-zone'}">${locked ? 'Unlock zone' : 'Lock zone'}</button></div>`;
+    if (locked) {
+      lockSection = `<div style="margin-top:8px"><button data-action="unlock-zone">Unlock zone</button> <button data-action="export-zone">Export</button></div>`;
+    } else {
+      lockSection = `<div style="margin-top:8px"><button data-action="lock-zone">Lock zone</button></div>`;
+    }
   }
   return `<div class="feature-popup"><b>${escapeHtml(p.name || '(unnamed)')}</b>${p.description ? '<br>' + escapeHtml(p.description) : ''}${lockSection}</div>`;
 }
@@ -46,6 +50,13 @@ function attachFeaturePopupHandlers(node, categoryFile, feature, layer) {
   node.querySelectorAll('button[data-action="unlock-zone"]').forEach(btn => {
     btn.addEventListener('click', () => {
       unlockZone(lockKeyFor(categoryFile, feature.properties && feature.properties.name));
+      layer.closePopup();
+    });
+  });
+  node.querySelectorAll('button[data-action="export-zone"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const name = (feature.properties && feature.properties.name) || '';
+      shareText('Jetlag locked zone', exportZoneText(categoryFile, name));
       layer.closePopup();
     });
   });
@@ -301,4 +312,48 @@ function loadLockedZones() {
       if (feature) lockZone(entry.categoryFile, feature);
     }
   } catch (e) { console.warn('Failed to load locked zones:', e); }
+}
+
+// ---------- Zone export / import ----------
+//
+//   jetlag zone <category> <name>
+//
+// Category is the basename without the .geojson extension.
+
+export function exportZoneText(categoryFile, name) {
+  const cat = categoryFile.replace(/\.geojson$/, '');
+  return `jetlag zone ${cat} ${name}`;
+}
+
+export function formatAllZonesExport() {
+  const lines = [];
+  for (const z of lockedZones.values()) {
+    lines.push(exportZoneText(z.categoryFile, z.name));
+  }
+  return lines.join('\n');
+}
+
+// Lock a zone given the category basename + the polygon's name. Used by
+// import flows. Returns true on success.
+export function lockZoneByName(category, name) {
+  const file = category.endsWith('.geojson') ? category : category + '.geojson';
+  const cat = loadedLayers[file];
+  if (!cat || !cat.geo) return false;
+  const feature = cat.geo.features.find(f =>
+    f.properties && f.properties.name === name &&
+    f.geometry && f.geometry.type !== 'Point'
+  );
+  if (!feature) return false;
+  lockZone(file, feature);
+  return true;
+}
+
+// Parse jetlag-zone lines from arbitrary text.
+export function parseZonesFromText(text) {
+  const out = [];
+  for (const raw of (text || '').split(/\r?\n/)) {
+    const m = raw.trim().match(/^jetlag\s+zone\s+(\S+)\s+(.+)$/i);
+    if (m) out.push({ category: m[1], name: m[2] });
+  }
+  return out;
 }

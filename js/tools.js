@@ -2,8 +2,14 @@
 // pin) and live position tracking. Attaches DOM handlers at module load.
 
 import { map, toggleSidebar } from './map.js';
-import { addPin, pins } from './pins.js';
-import { parseCoords } from './coords.js';
+import {
+  addPin, pins,
+  parsePinsFromText, applyImportedPins, formatAllPinsExport,
+} from './pins.js';
+import {
+  lockedZones, lockZoneByName, parseZonesFromText, formatAllZonesExport,
+} from './layers.js';
+import { parseCoords, shareText } from './coords.js';
 
 const TRACK_KEY = 'jetlag.tracking.v1';
 
@@ -23,6 +29,9 @@ document.getElementById('drop-pin').addEventListener('click', () => {
 });
 
 // ---------- Pin from clipboard ----------
+// Tries the "jetlag <type>" multi-line format first (which can include pins,
+// thermometers, and locked zones). Falls back to a single decimal-pair / Plus
+// code parse for backwards-compatible single-pin paste.
 document.getElementById('paste-pin').addEventListener('click', async () => {
   toggleSidebar(false);
   if (!navigator.clipboard || !navigator.clipboard.readText) {
@@ -32,6 +41,22 @@ document.getElementById('paste-pin').addEventListener('click', async () => {
   let text;
   try { text = await navigator.clipboard.readText(); }
   catch (e) { alert('Could not read clipboard: ' + e.message); return; }
+
+  const pinsParsed = parsePinsFromText(text);
+  const zonesParsed = parseZonesFromText(text);
+  if (pinsParsed.pins.length || pinsParsed.thermometers.length || zonesParsed.length) {
+    const firstPin = applyImportedPins(pinsParsed);
+    let zonesAdded = 0;
+    for (const z of zonesParsed) if (lockZoneByName(z.category, z.name)) zonesAdded++;
+    if (firstPin) {
+      map.panTo([firstPin.lat, firstPin.lng]);
+      firstPin.marker.openPopup();
+    } else if (zonesAdded > 0) {
+      alert(`Imported ${zonesAdded} locked zone${zonesAdded === 1 ? '' : 's'}.`);
+    }
+    return;
+  }
+
   const coords = parseCoords(text);
   if (!coords) {
     alert('No coordinates found in clipboard:\n' + text.slice(0, 200));
@@ -43,24 +68,20 @@ document.getElementById('paste-pin').addEventListener('click', async () => {
 });
 
 // ---------- Export pins ----------
-document.getElementById('export-pins').addEventListener('click', async () => {
+// Exports all pins (with their attributes), all thermometers, and all
+// locked zones, in the same format that "Pin from clipboard" can re-import.
+document.getElementById('export-pins').addEventListener('click', () => {
   toggleSidebar(false);
-  if (pins.size === 0) { alert('No pins to export.'); return; }
-  const text = [...pins.values()]
-    .map(p => `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`)
-    .join('\n');
-  if (navigator.share) {
-    try { await navigator.share({ title: 'Jet Lag pins', text }); return; }
-    catch (e) { if (e.name !== 'AbortError') console.warn(e); }
+  const parts = [];
+  const pinsText = formatAllPinsExport();
+  if (pinsText) parts.push(pinsText);
+  const zonesText = formatAllZonesExport();
+  if (zonesText) parts.push(zonesText);
+  if (parts.length === 0) {
+    alert('Nothing to export — no pins, thermometers, or locked zones.');
+    return;
   }
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      alert(`Copied ${pins.size} pin${pins.size === 1 ? '' : 's'} to clipboard.`);
-      return;
-    } catch (e) { console.warn(e); }
-  }
-  prompt('Copy these pins:', text);
+  shareText('Jetlag state', parts.join('\n'));
 });
 
 // ---------- Pin at viewport center ----------
