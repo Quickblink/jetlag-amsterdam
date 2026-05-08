@@ -118,6 +118,31 @@ def placemark_to_feature(pm):
     return None
 
 
+def deduplicate_names(features):
+    """If a name appears more than once within this collection, suffix all
+    occurrences with " (N)" in input order, so each feature has a distinct
+    display name. Names appearing only once are left untouched.
+
+    Wijken/Waterland has 42 entries; Buurten and a few other admin layers
+    have many. Numbering them makes them visually identifiable in popups
+    (centroid is what disambiguates the lock key — see js/layers.js — but
+    the human-readable name should disambiguate too)."""
+    counts = {}
+    for f in features:
+        name = (f.get("properties") or {}).get("name")
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+    seen = {}
+    for f in features:
+        props = f.get("properties") or {}
+        name = props.get("name")
+        if not name or counts[name] <= 1:
+            continue
+        seen[name] = seen.get(name, 0) + 1
+        props["name"] = f"{name} ({seen[name]})"
+    return features
+
+
 def kml_to_geojson(kml_path):
     tree = ET.parse(kml_path)
     root = tree.getroot()
@@ -127,6 +152,7 @@ def kml_to_geojson(kml_path):
         f = placemark_to_feature(pm)
         if f:
             features.append(f)
+    deduplicate_names(features)
     fc = {"type": "FeatureCollection", "features": features}
     if styles:
         fc["_styles"] = styles
