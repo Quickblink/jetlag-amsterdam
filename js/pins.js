@@ -1,7 +1,7 @@
 // User-placed pins, their popup (radius / measuring / thermometer / lock /
 // remove), measuring circles, and pairwise thermometers between pins.
 
-import { map, measuringRenderer } from './map.js';
+import { map } from './map.js';
 import { loadedLayers } from './layers.js';
 import { escapeHtml, shareText } from './coords.js';
 
@@ -34,12 +34,52 @@ export const pins = new Map();
 export const thermometers = []; // [{ id, aId, bId, layers }]
 let pendingThermometerFrom = null;
 
+// ---------- Per-pin measuring-circle panes + palette ----------
+// Each pin's measuring circles get their own pane + canvas renderer + color.
+// Within one pane, overlapping opaque shapes union (pane-level opacity makes
+// the merged shape translucent). Across panes, different colors keep the
+// pin-to-pin distinction visible.
+const MEASURING_COLORS = [
+  '#ff7f0e', '#1f77b4', '#2ca02c', '#d62728', '#9467bd',
+  '#8c564b', '#e377c2', '#bcbd22', '#17becf', '#7f7f7f',
+];
+const measuringRenderers = new Map(); // pinId -> L.Canvas
+
+function colorForPin(id) {
+  const s = String(id);
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return MEASURING_COLORS[Math.abs(h) % MEASURING_COLORS.length];
+}
+
+function measuringPaneName(pinId) {
+  return `measuring-${pinId}`;
+}
+
+function ensureMeasuringPane(pinId) {
+  const name = measuringPaneName(pinId);
+  let renderer = measuringRenderers.get(pinId);
+  if (!map.getPane(name)) {
+    const pane = map.createPane(name);
+    pane.style.opacity = '0.35';
+    pane.style.zIndex = '410';
+    // Same reasoning as the shared pane: shapes are non-interactive, so
+    // the pane itself must let clicks through to the polygon canvas.
+    pane.style.pointerEvents = 'none';
+  }
+  if (!renderer) {
+    renderer = L.canvas({ pane: name });
+    measuringRenderers.set(pinId, renderer);
+  }
+  return { pane: name, renderer };
+}
+
 // ---------- Persistence ----------
 
 function savePins() {
   const data = [...pins.values()].map(p => ({
     id: p.id, lat: p.lat, lng: p.lng,
-    radius: p.radius, customRadius: p.customRadius,
+    radius: p.radius, customRadius: p.customRadius, customMode: p.customMode,
     measuringCategory: p.measuringCategory,
     locked: p.locked,
   }));
@@ -55,6 +95,11 @@ export function loadPins() {
   for (const p of (data || [])) {
     const pin = addPin(p.lat, p.lng, { id: p.id, save: false, locked: !!p.locked });
     if (p.customRadius) pin.customRadius = p.customRadius;
+    // customMode is the source of truth for "is the pin in Custom mode"; for
+    // pre-customMode saves, derive it from the radius value (legacy meaning).
+    pin.customMode = p.customMode !== undefined
+      ? !!p.customMode
+      : !!(p.radius && !RADII.includes(p.radius));
     if (p.radius) setCircle(pin.id, p.radius, false);
     if (p.measuringCategory) pin.measuringCategory = p.measuringCategory;
   }
@@ -94,10 +139,11 @@ function pinPopupHtml(id) {
 
   const radiusBtns = RADII.map(r => {
     const label = r >= 1000 ? (r / 1000) + ' km' : r + ' m';
-    return `<button class="r-btn${pin.radius === r ? ' active' : ''}" data-r="${r}">${label}</button>`;
+    const isActive = !pin.customMode && pin.radius === r;
+    return `<button class="r-btn${isActive ? ' active' : ''}" data-r="${r}">${label}</button>`;
   }).join('');
   const noneActive = !pin.radius ? ' active' : '';
-  const isCustom = pin.radius && !RADII.includes(pin.radius);
+  const isCustom = !!pin.customMode;
   // Always render the slider row in the DOM, just hidden until Custom is
   // active. This way switching to/from Custom toggles a display style on an
   // existing element instead of rebuilding the popup, which keeps the
@@ -168,14 +214,14 @@ function setRadiusActive(node, pin) {
     btn.classList.remove('active');
     const v = btn.dataset.r;
     if (v === '' && !pin.radius) btn.classList.add('active');
-    else if (v === 'custom' && pin.radius && !RADII.includes(pin.radius)) btn.classList.add('active');
-    else if (v !== '' && v !== 'custom' && parseInt(v, 10) === pin.radius) btn.classList.add('active');
+    else if (v === 'custom' && pin.customMode) btn.classList.add('active');
+    else if (v !== '' && v !== 'custom' && !pin.customMode && parseInt(v, 10) === pin.radius) btn.classList.add('active');
   }
   const sliderRow = node.querySelector('.custom-radius');
   if (!sliderRow) return;
-  const isCustom = pin.radius && !RADII.includes(pin.radius);
+  const isCustom = !!pin.customMode;
   sliderRow.style.display = isCustom ? 'flex' : 'none';
-  if (isCustom) {
+  if (isCustom && pin.radius) {
     const slider = sliderRow.querySelector('input[type="range"]');
     const display = sliderRow.querySelector('.custom-display');
     if (slider) slider.value = radiusToSlider(pin.radius).toFixed(3);
@@ -184,24 +230,31 @@ function setRadiusActive(node, pin) {
 }
 
 function attachPopupHandlers(node, id) {
-  const pin = pins.get(id);
   node.querySelectorAll('button[data-r]').forEach(btn => {
     btn.addEventListener('click', () => {
       const v = btn.dataset.r;
-      if (v === '') { setCircle(id, null); setRadiusActive(node, pins.get(id)); return; }
-      if (v === 'custom') {
-        // Switch to custom mode. Use last custom value if there is one,
-        // otherwise default to the slider midpoint (~548 m). 1000 would
-        // collide with the 1km preset and bounce us out of custom mode.
-        const initial = (pin && pin.radius && !RADII.includes(pin.radius))
-          ? pin.radius
-          : ((pin && pin.customRadius) || CUSTOM_DEFAULT);
-        setCircle(id, initial);
-        setRadiusActive(node, pins.get(id));
+      const pin = pins.get(id);
+      if (!pin) return;
+      if (v === '') {
+        pin.customMode = false;
+        setCircle(id, null);
+        setRadiusActive(node, pin);
         return;
       }
+      if (v === 'custom') {
+        // Enter Custom mode. Use the last custom value if there is one,
+        // otherwise default to the slider midpoint (~548 m).
+        pin.customMode = true;
+        const initial = pin.customRadius || CUSTOM_DEFAULT;
+        pin.customRadius = initial;
+        setCircle(id, initial);
+        setRadiusActive(node, pin);
+        return;
+      }
+      // Plain preset.
+      pin.customMode = false;
       setCircle(id, parseInt(v, 10));
-      setRadiusActive(node, pins.get(id));
+      setRadiusActive(node, pin);
     });
   });
   const slider = node.querySelector('.custom-radius input[type="range"]');
@@ -209,6 +262,13 @@ function attachPopupHandlers(node, id) {
   if (slider) {
     slider.addEventListener('input', () => {
       const r = sliderToRadius(parseFloat(slider.value));
+      const pin = pins.get(id);
+      if (!pin) return;
+      // The slider is only visible in Custom mode, but be defensive — the
+      // value the user lands on may coincide with a preset (e.g. exactly
+      // 1km), and we still want the popup to consider that Custom.
+      pin.customMode = true;
+      pin.customRadius = r;
       if (display) display.textContent = formatRadius(r);
       // Update the circle live without re-rendering the popup so the
       // slider keeps focus and the user can keep dragging.
@@ -272,7 +332,7 @@ export function addPin(lat, lng, { id = Date.now() + Math.random(), save = true,
   const marker = L.marker([lat, lng], { draggable: !locked }).addTo(map);
   const pin = {
     id, lat, lng, marker,
-    circle: null, radius: null, customRadius: null,
+    circle: null, radius: null, customRadius: null, customMode: false,
     measuringCategory: null, measuringCircles: [],
     locked: !!locked,
   };
@@ -337,15 +397,18 @@ function setCircle(id, radius, save = true) {
   if (!pin) return;
   if (pin.circle) { map.removeLayer(pin.circle); pin.circle = null; }
   pin.radius = radius;
-  if (radius && !RADII.includes(radius)) pin.customRadius = radius;
   if (radius) {
     pin.circle = L.circle([pin.lat, pin.lng], {
       radius, color: '#0066cc', weight: 2, fillColor: '#0066cc', fillOpacity: 0.1,
+      // The radius circle is decorative; making it non-interactive lets
+      // clicks fall through to the polygon canvas so voronoi zones
+      // stay selectable when a radar is drawn over them.
+      interactive: false,
     }).addTo(map);
   }
   if (save) savePins();
-  // No popup refresh here — callers refresh when needed. The slider input
-  // handler deliberately skips refresh so it keeps focus while dragging.
+  // customMode / customRadius are managed by the callers (button handlers,
+  // slider, importers) — setCircle stays purely about the visual circle.
 }
 
 // ---------- Measuring circles (matching-question visualization) ----------
@@ -365,15 +428,20 @@ function drawMeasuringCircles(pin) {
     if (d < dNearest) dNearest = d;
   }
   if (!isFinite(dNearest) || dNearest === 0) return;
+  // Each pin gets its own pane + canvas. Within a pane, overlapping
+  // shapes union (because fillOpacity is 1.0 and pane opacity is 0.35).
+  // Across panes, different colors keep two pins' measuring sets visually
+  // distinct even where their circles overlap.
+  const { pane, renderer } = ensureMeasuringPane(pin.id);
+  const color = colorForPin(pin.id);
   for (const f of points) {
     const [lng, lat] = f.geometry.coordinates;
     const c = L.circle([lat, lng], {
       radius: dNearest,
       stroke: false,
-      fillColor: '#ff7f0e', fillOpacity: 1.0,
+      fillColor: color, fillOpacity: 1.0,
       interactive: false,
-      pane: 'measuring',
-      renderer: measuringRenderer,
+      pane, renderer,
     }).addTo(map);
     pin.measuringCircles.push(c);
   }
@@ -608,7 +676,15 @@ export function applyImportedPins(parsed) {
     let pin = findPinAtCoord(p.lat, p.lng);
     if (!pin) {
       pin = addPin(p.lat, p.lng, { locked: !!p.locked });
-      if (p.radius) setCircle(pin.id, p.radius);
+      if (p.radius) {
+        // Imported radius outside the preset set is treated as Custom mode
+        // so the receiving popup highlights the slider rather than nothing.
+        if (!RADII.includes(p.radius)) {
+          pin.customMode = true;
+          pin.customRadius = p.radius;
+        }
+        setCircle(pin.id, p.radius);
+      }
       if (p.measuringCategory && loadedLayers[p.measuringCategory]) {
         pin.measuringCategory = p.measuringCategory;
         drawMeasuringCircles(pin);
