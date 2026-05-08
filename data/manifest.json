@@ -11,8 +11,18 @@
       "default": false
     },
     {
+      "file": "buurten.geojson",
+      "label": "Buurten",
+      "default": false
+    },
+    {
       "file": "consulates.geojson",
       "label": "Consulates",
+      "default": false
+    },
+    {
+      "file": "gebieden.geojson",
+      "label": "Gebieden",
       "default": false
     },
     {
@@ -56,8 +66,18 @@
       "default": false
     },
     {
+      "file": "stadsdelen.geojson",
+      "label": "Stadsdelen",
+      "default": false
+    },
+    {
       "file": "transit_stations.geojson",
       "label": "Transit Stations",
+      "default": false
+    },
+    {
+      "file": "wijken.geojson",
+      "label": "Wijken",
       "default": false
     },
     {
