@@ -251,7 +251,24 @@ export function refreshAllPinPopups() {
 
 // ---------- Pin lifecycle ----------
 
+// Find a pin already at the given coordinates, comparing at 6-decimal
+// precision (matches the export format and is finer than typical
+// geolocation noise). Used for dedup.
+function findPinAtCoord(lat, lng) {
+  const key = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+  for (const p of pins.values()) {
+    if (`${p.lat.toFixed(6)},${p.lng.toFixed(6)}` === key) return p;
+  }
+  return null;
+}
+
 export function addPin(lat, lng, { id = Date.now() + Math.random(), save = true, locked = false } = {}) {
+  // Skip duplicate placements: if a pin already exists at the exact same
+  // location, return that pin instead of creating a new one. Callers that
+  // pan + open popup will surface the existing pin to the user.
+  const existing = findPinAtCoord(lat, lng);
+  if (existing) return existing;
+
   const marker = L.marker([lat, lng], { draggable: !locked }).addTo(map);
   const pin = {
     id, lat, lng, marker,
@@ -576,17 +593,26 @@ export function parsePinsFromText(text) {
   return out;
 }
 
-// Apply parsed pin/therm data to the map. Returns the first created pin
-// (caller can pan to it / open its popup).
+// Apply parsed pin/therm data to the map. Returns the first pin (existing
+// or newly created) so the caller can pan to it.
+//
+// Dedup: if a pin already exists at the same coordinates, the import skips
+// applying that line's attributes — the existing pin is left untouched.
+// The thermometer-linking step still resolves through the existing pin, so
+// `jetlag therm` lines work whether the endpoints were just created or were
+// already on the map.
 export function applyImportedPins(parsed) {
   const byCoord = new Map();
   let firstPin = null;
   for (const p of parsed.pins) {
-    const pin = addPin(p.lat, p.lng, { locked: !!p.locked });
-    if (p.radius) setCircle(pin.id, p.radius);
-    if (p.measuringCategory && loadedLayers[p.measuringCategory]) {
-      pin.measuringCategory = p.measuringCategory;
-      drawMeasuringCircles(pin);
+    let pin = findPinAtCoord(p.lat, p.lng);
+    if (!pin) {
+      pin = addPin(p.lat, p.lng, { locked: !!p.locked });
+      if (p.radius) setCircle(pin.id, p.radius);
+      if (p.measuringCategory && loadedLayers[p.measuringCategory]) {
+        pin.measuringCategory = p.measuringCategory;
+        drawMeasuringCircles(pin);
+      }
     }
     byCoord.set(coordKey(p.lat, p.lng), pin);
     if (!firstPin) firstPin = pin;
