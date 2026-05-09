@@ -143,7 +143,7 @@ def deduplicate_names(features):
     return features
 
 
-def kml_to_geojson(kml_path):
+def kml_to_geojson(kml_path, drop_polygons=False):
     tree = ET.parse(kml_path)
     root = tree.getroot()
     styles = parse_styles(root)
@@ -152,6 +152,11 @@ def kml_to_geojson(kml_path):
         f = placemark_to_feature(pm)
         if f:
             features.append(f)
+    if drop_polygons:
+        features = [
+            f for f in features
+            if (f.get("geometry") or {}).get("type") == "Point"
+        ]
     deduplicate_names(features)
     fc = {"type": "FeatureCollection", "features": features}
     if styles:
@@ -195,6 +200,12 @@ SKIP_CATEGORIES = {"play_area", "transit_stations"}
 # can't ask questions against it.
 INFORMATIONAL_CATEGORIES = {"ferry_bus_stops"}
 
+# Categories where Voronoi-cell polygons aren't useful (too few features
+# to make meaningful zones — Hospitals at 7 features carves Amsterdam into
+# 7 massive cells). Keep the icon points; drop the polygons. The sidebar
+# Zones checkbox automatically goes disabled when there are no polygons.
+DROP_POLYGONS = {"golf", "hospitals"}
+
 # Display-label overrides for cases where filename.replace("_", " ").title()
 # doesn't read well. Keys are KML stems.
 LABEL_OVERRIDES = {
@@ -219,7 +230,7 @@ def main():
         if category in SKIP_CATEGORIES:
             print(f"{kml.name} -> skipped (in SKIP_CATEGORIES)")
             continue
-        gj = kml_to_geojson(kml)
+        gj = kml_to_geojson(kml, drop_polygons=(category in DROP_POLYGONS))
         out = dst / f"{category}.geojson"
         out.write_text(json.dumps(gj, separators=(",", ":")))
         print(f"{kml.name} -> data/{out.name} ({len(gj['features'])} features, {len(gj.get('_styles', {}))} styles)")
