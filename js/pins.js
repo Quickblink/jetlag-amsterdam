@@ -689,31 +689,35 @@ export function parsePinsFromText(text) {
 // Apply parsed pin/therm data to the map. Returns the first pin (existing
 // or newly created) so the caller can pan to it.
 //
-// Dedup: if a pin already exists at the same coordinates, the import skips
-// applying that line's attributes — the existing pin is left untouched.
-// The thermometer-linking step still resolves through the existing pin, so
-// `jetlag therm` lines work whether the endpoints were just created or were
-// already on the map.
+// Dedup behaviour: if a pin already exists at the same coordinates, the
+// import does NOT create a duplicate — instead it merges any attrs that
+// the import line specified onto the existing pin (radius, measuring,
+// locked). Attrs absent from the import line leave the existing pin's
+// state alone. Thermometer linking still resolves through whichever pin
+// is at each endpoint.
 export function applyImportedPins(parsed) {
   const byCoord = new Map();
   let firstPin = null;
   for (const p of parsed.pins) {
     let pin = findPinAtCoord(p.lat, p.lng);
     if (!pin) {
+      // Brand-new pin — addPin reads `locked` from opts.
       pin = addPin(p.lat, p.lng, { locked: !!p.locked });
-      if (p.radius) {
-        // Imported radius outside the preset set is treated as Custom mode
-        // so the receiving popup highlights the slider rather than nothing.
-        if (!RADII.includes(p.radius)) {
-          pin.customMode = true;
-          pin.customRadius = p.radius;
-        }
-        setCircle(pin.id, p.radius);
-      }
-      if (p.measuringCategory && loadedLayers[p.measuringCategory]) {
-        pin.measuringCategory = p.measuringCategory;
-        drawMeasuringCircles(pin);
-      }
+    } else if (p.locked === true && !pin.locked) {
+      // Existing pin: only flip locked when explicitly set in the import.
+      // The format can't express "explicitly unlocked" (the flag is
+      // omitted when not locked), so we only ever lock here.
+      pin.locked = true;
+      pin.marker.dragging.disable();
+    }
+    if (p.radius !== undefined) {
+      pin.customMode = !RADII.includes(p.radius);
+      if (pin.customMode) pin.customRadius = p.radius;
+      setCircle(pin.id, p.radius, false);
+    }
+    if (p.measuringCategory !== undefined && loadedLayers[p.measuringCategory]) {
+      pin.measuringCategory = p.measuringCategory;
+      drawMeasuringCircles(pin);
     }
     byCoord.set(coordKey(p.lat, p.lng), pin);
     if (!firstPin) firstPin = pin;
